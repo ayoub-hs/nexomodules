@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module>
+    <namespace>NsContainerManagement</namespace>
+    <version>1.0.0</version>
+    <name>Container Management</name>
+    <author>JaziERP</author>
+    <description>Track container in/out for sales, manage container stock, handle customer container balances with charging capabilities.</description>
+    <core>
+        <min-version>6.0.0</min-version>
+    </core>
+    <providers>
+        <provider>Modules\NsContainerManagement\Providers\ContainerManagementServiceProvider</provider>
+    </providers>
+</module>

@@ -1,0 +1,361 @@
+<?php
+
+use App\Classes\Schema;
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     *
+     * NOTE: Foreign key creation has been disabled due to data type incompatibilities
+     * between existing tables. The column types would need to be aligned before
+     * foreign keys can be safely added. For now, only safe schema changes are applied:
+     * - Quantity column type change (float -> decimal)
+     * - Performance indexes
+     *
+     * To enable foreign keys in the future:
+     * 1. Ensure all referenced columns have matching data types
+     * 2. Uncomment the foreign key methods below
+     * 3. Update the up() and down() methods to call these methods
+     */
+    public function up(): void
+    {
+        // Change quantity column from float to decimal(10,3)
+        $this->changeQuantityColumnType();
+
+        // Add performance indexes
+        $this->addPerformanceIndexes();
+
+        /*
+         * FOREIGN KEYS DISABLED - Data type incompatibilities detected
+         *
+         * The following foreign keys are commented out because the column types
+         * in the referencing tables don't match the referenced tables:
+         *
+         * ns_container_movements.customer_id -> nexopos_users.id
+         * ns_container_movements.order_id -> nexopos_orders.id
+         * ns_customer_container_balances.customer_id -> nexopos_users.id
+         * ns_customer_container_balances.container_type_id -> ns_container_types.id
+         * ns_product_containers.product_id -> nexopos_products.id
+         *
+         * To enable these foreign keys:
+         * 1. First migrate the column types to match (e.g., integer -> unsignedBigInteger)
+         * 2. Ensure all existing data conforms to the new types
+         * 3. Uncomment the methods below
+         *
+         * Update column types to match referenced tables before adding foreign keys
+         * $this->updateColumnTypes();
+         *
+         * Foreign keys for ns_container_movements table
+         * $this->addContainerMovementsForeignKeys();
+         *
+         * Foreign keys for ns_customer_container_balances table
+         * $this->addCustomerContainerBalancesForeignKeys();
+         *
+         * Foreign keys for ns_product_containers table
+         * $this->addProductContainersForeignKeys();
+         */
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        // Revert quantity column back to float
+        $this->revertQuantityColumnType();
+
+        // Remove performance indexes
+        $this->removePerformanceIndexes();
+
+        /*
+         * FOREIGN KEY REMOVAL DISABLED - See up() method for details
+         *
+         * Remove foreign keys in reverse order
+         * $this->removeProductContainersForeignKeys();
+         * $this->removeCustomerContainerBalancesForeignKeys();
+         * $this->removeContainerMovementsForeignKeys();
+         *
+         * Revert column types back to original
+         * $this->revertColumnTypes();
+         */
+    }
+
+    /**
+     * Change quantity column from float to decimal(10,3).
+     */
+    private function changeQuantityColumnType(): void
+    {
+        // Only modify the column if it exists (may have been created without it in earlier versions)
+        if (Schema::hasColumn('ns_customer_container_balances', 'quantity')) {
+            Schema::table('ns_customer_container_balances', function (Blueprint $table) {
+                $table->decimal('quantity', 10, 3)->default(0)->change();
+            });
+        }
+    }
+
+    /**
+     * Revert quantity column back to float.
+     */
+    private function revertQuantityColumnType(): void
+    {
+        // Only revert the column if it exists
+        if (Schema::hasColumn('ns_customer_container_balances', 'quantity')) {
+            Schema::table('ns_customer_container_balances', function (Blueprint $table) {
+                $table->float('quantity')->default(0)->change();
+            });
+        }
+    }
+
+    /**
+     * Add performance indexes.
+     */
+    private function addPerformanceIndexes(): void
+    {
+        // Index on ns_container_types.name
+        Schema::table('ns_container_types', function (Blueprint $table) {
+            if (! $this->indexExists('ns_container_types', 'ns_container_types_name_index')) {
+                $table->index('name', 'ns_container_types_name_index');
+            }
+        });
+
+        // Index on ns_container_inventory.last_adjustment_date
+        Schema::table('ns_container_inventory', function (Blueprint $table) {
+            if (! $this->indexExists('ns_container_inventory', 'ns_container_inventory_last_adj_date_index')) {
+                $table->index('last_adjustment_date', 'ns_container_inventory_last_adj_date_index');
+            }
+        });
+
+        // Index on ns_customer_container_balances.container_type_id
+        Schema::table('ns_customer_container_balances', function (Blueprint $table) {
+            if (! $this->indexExists('ns_customer_container_balances', 'ns_ccb_container_type_id_index')) {
+                $table->index('container_type_id', 'ns_ccb_container_type_id_index');
+            }
+        });
+    }
+
+    /**
+     * Remove performance indexes.
+     */
+    private function removePerformanceIndexes(): void
+    {
+        Schema::table('ns_container_types', function (Blueprint $table) {
+            if ($this->indexExists('ns_container_types', 'ns_container_types_name_index')) {
+                $table->dropIndex('ns_container_types_name_index');
+            }
+        });
+
+        Schema::table('ns_container_inventory', function (Blueprint $table) {
+            if ($this->indexExists('ns_container_inventory', 'ns_container_inventory_last_adj_date_index')) {
+                $table->dropIndex('ns_container_inventory_last_adj_date_index');
+            }
+        });
+
+        Schema::table('ns_customer_container_balances', function (Blueprint $table) {
+            if ($this->indexExists('ns_customer_container_balances', 'ns_ccb_container_type_id_index')) {
+                $table->dropIndex('ns_ccb_container_type_id_index');
+            }
+        });
+    }
+
+    /*
+     * ============================================================================
+     * FOREIGN KEY METHODS - DISABLED
+     * ============================================================================
+     *
+     * The following methods are kept for future reference but are not called.
+     * They would add foreign key constraints once data type incompatibilities
+     * are resolved.
+     */
+
+    /**
+     * Update column types to match referenced tables before adding foreign keys.
+     * DISABLED - See up() method for details.
+     */
+    private function updateColumnTypes(): void
+    {
+        // Update ns_container_movements columns to match nexopos_users.id and nexopos_orders.id
+        Schema::table('ns_container_movements', function (Blueprint $table) {
+            $table->unsignedBigInteger('customer_id')->nullable()->change();
+            $table->unsignedBigInteger('order_id')->nullable()->change();
+        });
+
+        // Update ns_customer_container_balances columns to match nexopos_users.id
+        Schema::table('ns_customer_container_balances', function (Blueprint $table) {
+            $table->unsignedBigInteger('customer_id')->change();
+        });
+    }
+
+    /**
+     * Revert column types back to original integer type.
+     * DISABLED - See up() method for details.
+     */
+    private function revertColumnTypes(): void
+    {
+        // Revert ns_container_movements columns back to integer
+        Schema::table('ns_container_movements', function (Blueprint $table) {
+            $table->integer('customer_id')->nullable()->change();
+            $table->integer('order_id')->nullable()->change();
+        });
+
+        // Revert ns_customer_container_balances columns back to integer
+        Schema::table('ns_customer_container_balances', function (Blueprint $table) {
+            $table->integer('customer_id')->change();
+        });
+    }
+
+    /**
+     * Add foreign keys to ns_container_movements table.
+     * DISABLED - See up() method for details.
+     */
+    private function addContainerMovementsForeignKeys(): void
+    {
+        Schema::table('ns_container_movements', function (Blueprint $table) {
+            // Foreign key: customer_id -> nexopos_users.id (nullable, set null on delete)
+            if (! $this->foreignKeyExists('ns_container_movements', 'ns_container_movements_customer_id_foreign')) {
+                $table->foreign('customer_id', 'ns_container_movements_customer_id_foreign')
+                    ->references('id')
+                    ->on('nexopos_users')
+                    ->onDelete('set null');
+            }
+
+            // Foreign key: order_id -> nexopos_orders.id (nullable, set null on delete)
+            if (! $this->foreignKeyExists('ns_container_movements', 'ns_container_movements_order_id_foreign')) {
+                $table->foreign('order_id', 'ns_container_movements_order_id_foreign')
+                    ->references('id')
+                    ->on('nexopos_orders')
+                    ->onDelete('set null');
+            }
+        });
+    }
+
+    /**
+     * Add foreign keys to ns_customer_container_balances table.
+     * DISABLED - See up() method for details.
+     */
+    private function addCustomerContainerBalancesForeignKeys(): void
+    {
+        Schema::table('ns_customer_container_balances', function (Blueprint $table) {
+            // Foreign key: customer_id -> nexopos_users.id (cascade on delete)
+            if (! $this->foreignKeyExists('ns_customer_container_balances', 'ns_ccb_customer_id_foreign')) {
+                $table->foreign('customer_id', 'ns_ccb_customer_id_foreign')
+                    ->references('id')
+                    ->on('nexopos_users')
+                    ->onDelete('cascade');
+            }
+
+            // Foreign key: container_type_id -> ns_container_types.id (cascade on delete)
+            if (! $this->foreignKeyExists('ns_customer_container_balances', 'ns_ccb_container_type_id_foreign')) {
+                $table->foreign('container_type_id', 'ns_ccb_container_type_id_foreign')
+                    ->references('id')
+                    ->on('ns_container_types')
+                    ->onDelete('cascade');
+            }
+        });
+    }
+
+    /**
+     * Add foreign keys to ns_product_containers table.
+     * DISABLED - See up() method for details.
+     */
+    private function addProductContainersForeignKeys(): void
+    {
+        Schema::table('ns_product_containers', function (Blueprint $table) {
+            // Foreign key: product_id -> nexopos_products.id (cascade on delete)
+            if (! $this->foreignKeyExists('ns_product_containers', 'ns_product_containers_product_id_foreign')) {
+                $table->foreign('product_id', 'ns_product_containers_product_id_foreign')
+                    ->references('id')
+                    ->on('nexopos_products')
+                    ->onDelete('cascade');
+            }
+        });
+    }
+
+    /**
+     * Remove foreign keys from ns_container_movements table.
+     * DISABLED - See up() method for details.
+     */
+    private function removeContainerMovementsForeignKeys(): void
+    {
+        Schema::table('ns_container_movements', function (Blueprint $table) {
+            if ($this->foreignKeyExists('ns_container_movements', 'ns_container_movements_customer_id_foreign')) {
+                $table->dropForeign('ns_container_movements_customer_id_foreign');
+            }
+            if ($this->foreignKeyExists('ns_container_movements', 'ns_container_movements_order_id_foreign')) {
+                $table->dropForeign('ns_container_movements_order_id_foreign');
+            }
+        });
+    }
+
+    /**
+     * Remove foreign keys from ns_customer_container_balances table.
+     * DISABLED - See up() method for details.
+     */
+    private function removeCustomerContainerBalancesForeignKeys(): void
+    {
+        Schema::table('ns_customer_container_balances', function (Blueprint $table) {
+            if ($this->foreignKeyExists('ns_customer_container_balances', 'ns_ccb_customer_id_foreign')) {
+                $table->dropForeign('ns_ccb_customer_id_foreign');
+            }
+            if ($this->foreignKeyExists('ns_customer_container_balances', 'ns_ccb_container_type_id_foreign')) {
+                $table->dropForeign('ns_ccb_container_type_id_foreign');
+            }
+        });
+    }
+
+    /**
+     * Remove foreign keys from ns_product_containers table.
+     * DISABLED - See up() method for details.
+     */
+    private function removeProductContainersForeignKeys(): void
+    {
+        Schema::table('ns_product_containers', function (Blueprint $table) {
+            if ($this->foreignKeyExists('ns_product_containers', 'ns_product_containers_product_id_foreign')) {
+                $table->dropForeign('ns_product_containers_product_id_foreign');
+            }
+        });
+    }
+
+    /**
+     * Check if a foreign key exists on a table.
+     * DISABLED - Kept for future use when foreign keys are enabled.
+     */
+    private function foreignKeyExists(string $table, string $foreignKey): bool
+    {
+        $database = DB::getDatabaseName();
+
+        $result = DB::select(
+            "SELECT CONSTRAINT_NAME
+             FROM information_schema.TABLE_CONSTRAINTS
+             WHERE TABLE_SCHEMA = ?
+             AND TABLE_NAME = ?
+             AND CONSTRAINT_NAME = ?
+             AND CONSTRAINT_TYPE = 'FOREIGN KEY'",
+            [$database, $table, $foreignKey]
+        );
+
+        return count($result) > 0;
+    }
+
+    /**
+     * Check if an index exists on a table.
+     */
+    private function indexExists(string $table, string $index): bool
+    {
+        $database = DB::getDatabaseName();
+
+        $result = DB::select(
+            "SELECT INDEX_NAME
+             FROM information_schema.STATISTICS
+             WHERE TABLE_SCHEMA = ?
+             AND TABLE_NAME = ?
+             AND INDEX_NAME = ?",
+            [$database, $table, $index]
+        );
+
+        return count($result) > 0;
+    }
+};

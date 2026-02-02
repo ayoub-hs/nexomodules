@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module>
+    <namespace>NsManufacturing</namespace>
+    <version>2.0.0</version>
+    <name>Manufacturing V2</name>
+    <author>JaziERP</author>
+    <description>Robust manufacturing management system with multilevel BOMs and strict inventory control.</description>
+    <core>
+        <min-version>6.0.0</min-version>
+    </core>
+    <providers>
+        <provider>Modules\NsManufacturing\Providers\NsManufacturingServiceProvider</provider>
+    </providers>
+</module>

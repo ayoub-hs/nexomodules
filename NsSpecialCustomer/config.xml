@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module>
+    <namespace>NsSpecialCustomer</namespace>
+    <version>1.0.0</version>
+    <name>Special Customer Management</name>
+    <author>JaziERP</author>
+    <description>Provides specialized features for premium customer group including wholesale pricing, special discounts, and cashback rewards.</description>
+    <core>
+        <min-version>6.0.0</min-version>
+    </core>
+    <providers>
+        <provider>Modules\NsSpecialCustomer\Providers\NsSpecialCustomerServiceProvider</provider>
+    </providers>
+</module>

@@ -1,0 +1,14 @@
+{
+    "name": "nexopos/mobileapi-module",
+    "description": "Mobile API Module for NexoPOS 6",
+    "type": "nexopos-module",
+    "version": "1.0.0",
+    "autoload": {
+        "psr-4": {
+            "Modules\\MobileApi\\": ""
+        }
+    },
+    "require": {
+        "php": "^8.2.0"
+    }
+}
