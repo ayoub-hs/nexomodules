@@ -17,7 +17,11 @@ return new class extends Migration
             $table->id();
             $table->unsignedBigInteger('customer_id');
             $table->unsignedBigInteger('container_type_id');
-            $table->float('quantity')->default(0);
+            $table->integer('balance')->default(0);
+            $table->integer('total_out')->default(0);
+            $table->integer('total_in')->default(0);
+            $table->integer('total_charged')->default(0);
+            $table->timestamp('last_movement_at')->nullable();
             $table->timestamps();
 
             // Shortened index name to avoid MySQL error

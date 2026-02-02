@@ -21,6 +21,7 @@ class ContainerLedgerService
 
     /**
      * Record containers going OUT to customer
+     * Uses transaction to ensure atomic operation with balance update
      */
     public function recordContainerOut(
         int $customerId,
@@ -30,25 +31,34 @@ class ContainerLedgerService
         string $sourceType = ContainerMovement::SOURCE_MANUAL_GIVE,
         ?string $note = null
     ): ContainerMovement {
-        $containerType = ContainerType::findOrFail($containerTypeId);
+        return DB::transaction(function () use ($customerId, $containerTypeId, $quantity, $orderId, $sourceType, $note) {
+            $containerType = ContainerType::findOrFail($containerTypeId);
 
-        return ContainerMovement::create([
-            'container_type_id' => $containerTypeId,
-            'customer_id' => $customerId,
-            'order_id' => $orderId,
-            'direction' => ContainerMovement::DIRECTION_OUT,
-            'quantity' => $quantity,
-            'unit_deposit_fee' => $containerType->deposit_fee,
-            'total_deposit_value' => $quantity * $containerType->deposit_fee,
-            'source_type' => $sourceType,
-            'note' => $note,
-            'author' => Auth::id(),
-            'created_at' => now(),
-        ]);
+            $movement = ContainerMovement::create([
+                'container_type_id' => $containerTypeId,
+                'customer_id' => $customerId,
+                'order_id' => $orderId,
+                'direction' => ContainerMovement::DIRECTION_OUT,
+                'quantity' => $quantity,
+                'unit_deposit_fee' => $containerType->deposit_fee,
+                'total_deposit_value' => $quantity * $containerType->deposit_fee,
+                'source_type' => $sourceType,
+                'note' => $note,
+                'author' => Auth::id(),
+                'created_at' => now(),
+            ]);
+
+            // Update balance and inventory within the same transaction
+            $this->updateCustomerBalance($customerId, $containerTypeId, out: $quantity);
+            $this->adjustInventoryQuantity($containerTypeId, -$quantity);
+
+            return $movement;
+        });
     }
 
     /**
      * Record containers coming IN from customer
+     * Uses transaction to ensure atomic operation with balance update
      */
     public function recordContainerIn(
         int $customerId,
@@ -57,51 +67,41 @@ class ContainerLedgerService
         string $sourceType = ContainerMovement::SOURCE_MANUAL_RETURN,
         ?string $note = null
     ): ContainerMovement {
-        $containerType = ContainerType::findOrFail($containerTypeId);
+        return DB::transaction(function () use ($customerId, $containerTypeId, $quantity, $sourceType, $note) {
+            $containerType = ContainerType::findOrFail($containerTypeId);
 
-        return ContainerMovement::create([
-            'container_type_id' => $containerTypeId,
-            'customer_id' => $customerId,
-            'direction' => ContainerMovement::DIRECTION_IN,
-            'quantity' => $quantity,
-            'unit_deposit_fee' => $containerType->deposit_fee,
-            'total_deposit_value' => $quantity * $containerType->deposit_fee,
-            'source_type' => $sourceType,
-            'note' => $note,
-            'author' => Auth::id(),
-            'created_at' => now(),
-        ]);
+            $movement = ContainerMovement::create([
+                'container_type_id' => $containerTypeId,
+                'customer_id' => $customerId,
+                'direction' => ContainerMovement::DIRECTION_IN,
+                'quantity' => $quantity,
+                'unit_deposit_fee' => $containerType->deposit_fee,
+                'total_deposit_value' => $quantity * $containerType->deposit_fee,
+                'source_type' => $sourceType,
+                'note' => $note,
+                'author' => Auth::id(),
+                'created_at' => now(),
+            ]);
+
+            // Update balance and inventory within the same transaction
+            $this->updateCustomerBalance($customerId, $containerTypeId, in: $quantity);
+            $this->adjustInventoryQuantity($containerTypeId, $quantity);
+
+            return $movement;
+        });
     }
 
     /**
      * Handle the side effects of a movement (Inventory & Balance)
      * This is triggered by ContainerMovement model created event
+     * 
+     * NOTE: This method is now deprecated as movements are handled atomically
+     * in recordContainerOut/In methods. Kept for backward compatibility.
      */
     public function handleMovementEffect(ContainerMovement $movement): void
     {
-        $qty = $movement->quantity;
-        $typeId = $movement->container_type_id;
-        $customerId = $movement->customer_id;
-
-        switch ($movement->direction) {
-            case ContainerMovement::DIRECTION_OUT:
-                $this->updateCustomerBalance($customerId, $typeId, out: $qty);
-                $this->adjustInventoryQuantity($typeId, -$qty);
-                break;
-
-            case ContainerMovement::DIRECTION_IN:
-                $this->updateCustomerBalance($customerId, $typeId, in: $qty);
-                $this->adjustInventoryQuantity($typeId, $qty);
-                break;
-
-            case ContainerMovement::DIRECTION_CHARGE:
-                $this->updateCustomerBalance($customerId, $typeId, charged: $qty);
-                break;
-
-            case ContainerMovement::DIRECTION_ADJUSTMENT:
-                $this->adjustInventoryQuantity($typeId, $qty);
-                break;
-        }
+        // This method is kept for backward compatibility but should not be called
+        // as movements are now handled atomically in recordContainerOut/In methods
     }
 
     /**
@@ -153,6 +153,9 @@ class ContainerLedgerService
                 'author' => Auth::id(),
                 'created_at' => now(),
             ]);
+
+            // Update balance within the same transaction
+            $this->updateCustomerBalance($customerId, $containerTypeId, charged: $quantity);
 
             return [
                 'movement' => $movement,
@@ -227,15 +230,12 @@ class ContainerLedgerService
         if ($from) {
             $query->whereDate('m.created_at', '>=', $from);
         }
-
         if ($to) {
             $query->whereDate('m.created_at', '<=', $to);
         }
-
         if ($customerId) {
             $query->where('m.customer_id', $customerId);
         }
-
         if ($typeId) {
             $query->where('m.container_type_id', $typeId);
         }
@@ -250,6 +250,10 @@ class ContainerLedgerService
             'last_page' => $paginated->lastPage(),
         ];
     }
+
+    /**
+     * Recalculate customer balance from movements
+     */
     public function recalculateCustomerBalance(int $customerId, int $containerTypeId): CustomerContainerBalance
     {
         $movements = ContainerMovement::where('customer_id', $customerId)
@@ -299,15 +303,12 @@ class ContainerLedgerService
         if ($from) {
             $query->whereDate('b.updated_at', '>=', $from);
         }
-
         if ($to) {
             $query->whereDate('b.updated_at', '<=', $to);
         }
-
         if ($customerId) {
             $query->where('b.customer_id', $customerId);
         }
-
         if ($typeId) {
             $query->where('b.container_type_id', $typeId);
         }

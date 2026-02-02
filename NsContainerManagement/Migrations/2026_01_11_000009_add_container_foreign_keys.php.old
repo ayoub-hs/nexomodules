@@ -13,7 +13,6 @@ return new class extends Migration
      * NOTE: Foreign key creation has been disabled due to data type incompatibilities
      * between existing tables. The column types would need to be aligned before
      * foreign keys can be safely added. For now, only safe schema changes are applied:
-     * - Quantity column type change (float -> decimal)
      * - Performance indexes
      *
      * To enable foreign keys in the future:
@@ -23,17 +22,14 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Change quantity column from float to decimal(10,3)
-        $this->changeQuantityColumnType();
-
         // Add performance indexes
         $this->addPerformanceIndexes();
 
         /*
          * FOREIGN KEYS DISABLED - Data type incompatibilities detected
          *
-         * The following foreign keys are commented out because the column types
-         * in the referencing tables don't match the referenced tables:
+         * The following foreign keys are commented out because of column types
+         * in referencing tables don't match the referenced tables:
          *
          * ns_container_movements.customer_id -> nexopos_users.id
          * ns_container_movements.order_id -> nexopos_orders.id
@@ -42,7 +38,7 @@ return new class extends Migration
          * ns_product_containers.product_id -> nexopos_products.id
          *
          * To enable these foreign keys:
-         * 1. First migrate the column types to match (e.g., integer -> unsignedBigInteger)
+         * 1. First migrate column types to match (e.g., integer -> unsignedBigInteger)
          * 2. Ensure all existing data conforms to the new types
          * 3. Uncomment the methods below
          *
@@ -65,9 +61,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        // Revert quantity column back to float
-        $this->revertQuantityColumnType();
-
         // Remove performance indexes
         $this->removePerformanceIndexes();
 
@@ -82,32 +75,6 @@ return new class extends Migration
          * Revert column types back to original
          * $this->revertColumnTypes();
          */
-    }
-
-    /**
-     * Change quantity column from float to decimal(10,3).
-     */
-    private function changeQuantityColumnType(): void
-    {
-        // Only modify the column if it exists (may have been created without it in earlier versions)
-        if (Schema::hasColumn('ns_customer_container_balances', 'quantity')) {
-            Schema::table('ns_customer_container_balances', function (Blueprint $table) {
-                $table->decimal('quantity', 10, 3)->default(0)->change();
-            });
-        }
-    }
-
-    /**
-     * Revert quantity column back to float.
-     */
-    private function revertQuantityColumnType(): void
-    {
-        // Only revert the column if it exists
-        if (Schema::hasColumn('ns_customer_container_balances', 'quantity')) {
-            Schema::table('ns_customer_container_balances', function (Blueprint $table) {
-                $table->float('quantity')->default(0)->change();
-            });
-        }
     }
 
     /**
@@ -331,9 +298,9 @@ return new class extends Migration
             "SELECT CONSTRAINT_NAME
              FROM information_schema.TABLE_CONSTRAINTS
              WHERE TABLE_SCHEMA = ?
-             AND TABLE_NAME = ?
-             AND CONSTRAINT_NAME = ?
-             AND CONSTRAINT_TYPE = 'FOREIGN KEY'",
+              AND TABLE_NAME = ?
+              AND CONSTRAINT_NAME = ?
+              AND CONSTRAINT_TYPE = 'FOREIGN KEY'",
             [$database, $table, $foreignKey]
         );
 
@@ -351,11 +318,11 @@ return new class extends Migration
             "SELECT INDEX_NAME
              FROM information_schema.STATISTICS
              WHERE TABLE_SCHEMA = ?
-             AND TABLE_NAME = ?
-             AND INDEX_NAME = ?",
+              AND TABLE_NAME = ?
+              AND INDEX_NAME = ?",
             [$database, $table, $index]
         );
 
         return count($result) > 0;
     }
-};
+}

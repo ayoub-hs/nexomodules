@@ -10,8 +10,9 @@ return new class extends Migration
     {
         if (Schema::hasTable('ns_product_containers') && !Schema::hasColumn('ns_product_containers', 'unit_id')) {
             Schema::table('ns_product_containers', function (Blueprint $blueprint) {
-                $blueprint->integer('unit_id')->unsigned()->nullable()->after('product_id');
-                $blueprint->foreign('unit_id')->references('id')->on('nexopos_units')->onDelete('cascade');
+                $blueprint->unsignedBigInteger('unit_id')->nullable()->after('product_id');
+                // Use index instead of foreign key for flexibility
+                $blueprint->index('unit_id');
             });
         }
     }
@@ -20,7 +21,6 @@ return new class extends Migration
     {
         if (Schema::hasTable('ns_product_containers') && Schema::hasColumn('ns_product_containers', 'unit_id')) {
             Schema::table('ns_product_containers', function (Blueprint $blueprint) {
-                $blueprint->dropForeign(['unit_id']);
                 $blueprint->dropColumn('unit_id');
             });
         }

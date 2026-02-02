@@ -103,44 +103,17 @@ return new class extends Migration
             // Timestamps
             $table->timestamps();
 
-            // Foreign key constraints
-            $table->foreign('customer_id')
-                  ->references('id')
-                  ->on('nexopos_users')
-                  ->onDelete('cascade')
-                  ->onUpdate('cascade');
-
-            $table->foreign('transaction_id')
-                  ->references('id')
-                  ->on('nexopos_customers_account_history')
-                  ->onDelete('set null')
-                  ->onUpdate('cascade');
-
-            $table->foreign('reversal_transaction_id')
-                  ->references('id')
-                  ->on('nexopos_customers_account_history')
-                  ->onDelete('set null')
-                  ->onUpdate('cascade');
-
-            $table->foreign('author')
-                  ->references('id')
-                  ->on('nexopos_users')
-                  ->onDelete('set null')
-                  ->onUpdate('cascade');
-
-            $table->foreign('reversal_author')
-                  ->references('id')
-                  ->on('nexopos_users')
-                  ->onDelete('set null')
-                  ->onUpdate('cascade');
-
             // Indexes for performance
             // Use unique constraint for customer_id + year to prevent duplicate cashback entries
             $table->unique(['customer_id', 'year'], 'ns_special_cashback_customer_year_unique');
+            $table->index(['customer_id'], 'ns_special_cashback_customer');
             $table->index(['status'], 'ns_special_cashback_status');
             $table->index(['year'], 'ns_special_cashback_year');
             $table->index(['processed_at'], 'ns_special_cashback_processed_at');
             $table->index(['transaction_id'], 'ns_special_cashback_transaction');
+            $table->index(['reversal_transaction_id'], 'ns_special_cashback_reversal_transaction');
+            $table->index(['author'], 'ns_special_cashback_author');
+            $table->index(['reversal_author'], 'ns_special_cashback_reversal_author');
             $table->index(['created_at'], 'ns_special_cashback_created_at');
             });
         }

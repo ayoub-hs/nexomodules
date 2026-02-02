@@ -17,11 +17,9 @@ return new class extends Migration
             $table->integer('last_adjustment_by')->nullable();
             $table->string('last_adjustment_reason', 255)->nullable();
             $table->timestamps();
-
-            $table->foreign('container_type_id')
-                ->references('id')
-                ->on('ns_container_types')
-                ->onDelete('cascade');
+            
+            // Use index instead of foreign key for flexibility
+            $table->index('container_type_id');
         });
     }
 

@@ -20,12 +20,7 @@ return new class extends Migration
             $table->unsignedBigInteger('author');
             $table->timestamps();
 
-            // Foreign keys
-            $table->foreign('author')->references('id')->on('nexopos_users')->onDelete('cascade');
-            $table->foreign('product_id')->references('id')->on('nexopos_products')->onDelete('set null');
-            $table->foreign('unit_id')->references('id')->on('nexopos_units')->onDelete('set null');
-
-            // Indexes
+            // Indexes for performance (no foreign key constraints)
             $table->index('product_id');
             $table->index('author');
             $table->index('unit_id');
@@ -35,17 +30,6 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::table('ns_manufacturing_boms', function (Blueprint $table) {
-            // Drop foreign keys first
-            $table->dropForeign(['author']);
-            $table->dropForeign(['product_id']);
-            $table->dropForeign(['unit_id']);
-
-            // Drop indexes
-            $table->dropIndex(['unit_id']);
-            $table->dropIndex(['is_active']);
-        });
-
         Schema::dropIfExists('ns_manufacturing_boms');
     }
 };

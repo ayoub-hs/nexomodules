@@ -15,11 +15,8 @@ return new class extends Migration
             $table->boolean('is_enabled')->default(true);
             $table->timestamps();
 
-            $table->foreign('container_type_id')
-                ->references('id')
-                ->on('ns_container_types')
-                ->onDelete('cascade');
-
+            // Use index instead of foreign key for flexibility
+            $table->index('container_type_id');
             $table->unique(['product_id', 'container_type_id']);
             $table->index('product_id');
         });

@@ -42,7 +42,7 @@ class ContainerManagementServiceProvider extends ServiceProvider
     {
         $this->runPermissionMigration();
 
-        $this->loadMigrationsFrom(__DIR__ . '/../Database/Migrations');
+        $this->loadMigrationsFrom(__DIR__ . '/../Migrations');
         $this->loadRoutesFrom(__DIR__ . '/../Routes/api.php');
         $this->loadRoutesFrom(__DIR__ . '/../Routes/web.php');
         $this->loadViewsFrom(__DIR__ . '/../Resources/Views', 'nscontainermanagement');
@@ -349,7 +349,7 @@ class ContainerManagementServiceProvider extends ServiceProvider
      */
     protected function runPermissionMigration(): void
     {
-        $migrationPath = __DIR__ . '/../Database/Migrations/2026_01_11_000008_create_container_permissions.php';
+        $migrationPath = __DIR__ . '/../Migrations/2026_01_11_000008_create_container_permissions.php';
 
         if (! file_exists($migrationPath)) {
             return;

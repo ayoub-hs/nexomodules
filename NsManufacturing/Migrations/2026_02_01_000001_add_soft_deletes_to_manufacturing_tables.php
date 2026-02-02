@@ -13,13 +13,19 @@ return new class extends Migration
     {
         if (Schema::hasTable('ns_manufacturing_boms')) {
             Schema::table('ns_manufacturing_boms', function (Blueprint $table) {
-                $table->softDeletes();
+                // Only add soft deletes if the column doesn't exist
+                if (!Schema::hasColumn('ns_manufacturing_boms', 'deleted_at')) {
+                    $table->softDeletes();
+                }
             });
         }
 
         if (Schema::hasTable('ns_manufacturing_orders')) {
             Schema::table('ns_manufacturing_orders', function (Blueprint $table) {
-                $table->softDeletes();
+                // Only add soft deletes if the column doesn't exist
+                if (!Schema::hasColumn('ns_manufacturing_orders', 'deleted_at')) {
+                    $table->softDeletes();
+                }
             });
         }
     }
@@ -31,13 +37,19 @@ return new class extends Migration
     {
         if (Schema::hasTable('ns_manufacturing_boms')) {
             Schema::table('ns_manufacturing_boms', function (Blueprint $table) {
-                $table->dropSoftDeletes();
+                // Only drop soft deletes if the column exists
+                if (Schema::hasColumn('ns_manufacturing_boms', 'deleted_at')) {
+                    $table->dropSoftDeletes();
+                }
             });
         }
 
         if (Schema::hasTable('ns_manufacturing_orders')) {
             Schema::table('ns_manufacturing_orders', function (Blueprint $table) {
-                $table->dropSoftDeletes();
+                // Only drop soft deletes if the column exists
+                if (Schema::hasColumn('ns_manufacturing_orders', 'deleted_at')) {
+                    $table->dropSoftDeletes();
+                }
             });
         }
     }
