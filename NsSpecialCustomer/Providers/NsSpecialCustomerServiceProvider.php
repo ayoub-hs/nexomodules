@@ -52,7 +52,8 @@ class NsSpecialCustomerServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        
+        $this->runPermissionMigration();
+        $this->loadMigrationsFrom( __DIR__ . '/../Migrations' );
         $this->loadViewsFrom( __DIR__ . '/../Resources/Views', 'NsSpecialCustomer' );
         $this->loadRoutesFrom( __DIR__ . '/../Routes/api.php' );
         $this->loadRoutesFrom( __DIR__ . '/../Routes/web.php' );
@@ -313,5 +314,22 @@ class NsSpecialCustomerServiceProvider extends ServiceProvider
 
             return $fields;
         } );
+    }
+
+    protected function runPermissionMigration(): void
+    {
+        $migrationPath = __DIR__ . '/../Migrations/2024_01_15_000001_create_special_customer_permissions.php';
+
+        if ( ! file_exists( $migrationPath ) ) {
+            return;
+        }
+
+        try {
+            $migration = require $migrationPath;
+            if ( $migration instanceof \Illuminate\Database\Migrations\Migration ) {
+                $migration->up();
+            }
+        } catch ( \Exception $e ) {
+        }
     }
 }
