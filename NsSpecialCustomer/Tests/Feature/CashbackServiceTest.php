@@ -4,6 +4,7 @@ namespace Modules\NsSpecialCustomer\Tests\Feature;
 
 use Tests\TestCase;
 use App\Models\Customer;
+use App\Models\CustomerGroup;
 use App\Models\CustomerAccountHistory;
 use Modules\NsSpecialCustomer\Models\SpecialCashbackHistory;
 use Modules\NsSpecialCustomer\Services\CashbackService;

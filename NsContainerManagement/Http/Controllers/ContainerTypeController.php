@@ -38,6 +38,9 @@ class ContainerTypeController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        if ($request->isJson()) {
+            $request->merge($request->json()->all());
+        }
         $validated = $request->validate([
             'name' => 'required|string|max:100',
             'capacity' => 'required|numeric|min:0.001',
@@ -75,6 +78,9 @@ class ContainerTypeController extends Controller
      */
     public function update(Request $request, int $id): JsonResponse
     {
+        if ($request->isJson()) {
+            $request->merge($request->json()->all());
+        }
         $validated = $request->validate([
             'name' => 'string|max:100',
             'capacity' => 'numeric|min:0.001',

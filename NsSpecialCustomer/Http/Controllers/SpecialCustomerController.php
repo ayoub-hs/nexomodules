@@ -30,11 +30,20 @@ class SpecialCustomerController extends Controller
      */
     public function getConfig(): JsonResponse
     {
-        if (!ns()->allowedTo('special.customer.settings')) {
+        $isTesting = app()->runningUnitTests() || app()->environment('testing') || strtolower((string) env('APP_ENV')) === 'testing';
+
+        if (auth()->check()) {
+            if (!ns()->allowedTo('special.customer.settings')) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('You don\'t have permission to access this resource.')
+                ], 403);
+            }
+        } else {
             return response()->json([
                 'status' => 'error',
-                'message' => __('You don\'t have permission to access this resource.')
-            ], 403);
+                'message' => __('Authentication required.')
+            ], 401);
         }
         
         $config = $this->specialCustomerService->getConfig();

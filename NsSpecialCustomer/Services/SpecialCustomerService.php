@@ -43,7 +43,7 @@ class SpecialCustomerService implements SpecialCustomerServiceInterface
     public function getSpecialCustomers(array $filters = [], int $perPage = 50): array
     {
         $query = Customer::where('group_id', $this->getSpecialGroupId())
-            ->with(['accountHistory' => function($q) {
+            ->with(['account_history' => function($q) {
                 $q->latest()->limit(10);
             }]);
 
@@ -72,7 +72,7 @@ class SpecialCustomerService implements SpecialCustomerServiceInterface
      */
     public function getCustomerStatus(int $customerId): array
     {
-        $customer = Customer::with(['accountHistory' => function($q) {
+        $customer = Customer::with(['account_history' => function($q) {
             $q->latest()->limit(20);
         }])->find($customerId);
 

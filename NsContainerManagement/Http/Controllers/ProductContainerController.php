@@ -47,6 +47,9 @@ class ProductContainerController extends Controller
      */
     public function store(Request $request, int $productId): JsonResponse
     {
+        if ($request->isJson()) {
+            $request->merge($request->json()->all());
+        }
         $validated = $request->validate([
             'container_type_id' => 'required|exists:ns_container_types,id',
             'unit_id' => 'nullable|integer',

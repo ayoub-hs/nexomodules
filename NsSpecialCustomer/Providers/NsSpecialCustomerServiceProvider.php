@@ -204,6 +204,73 @@ class NsSpecialCustomerServiceProvider extends ServiceProvider
             return $options;
         } );
 
+        // Ensure filter availability for tests using App\Classes\Hook facade as well
+        \App\Classes\Hook::addFilter( 'ns-pos-options', function ( $options ) {
+            $specialCustomerService = app( SpecialCustomerService::class );
+            $config = $specialCustomerService->getConfig();
+
+            $options['specialCustomer'] = [
+                'enabled' => ! is_null( $config['groupId'] ),
+                'groupId' => $config['groupId'],
+                'discountPercentage' => $config['discountPercentage'],
+                'cashbackPercentage' => $config['cashbackPercentage'],
+                'applyDiscountStackable' => $config['applyDiscountStackable'],
+            ];
+
+            return $options;
+        } );
+
+        // POS Customer Selected Hook - returns special flags and wallet balance
+        \App\Classes\Hook::addFilter('ns-pos-customer-selected', function ($data, $customer) {
+            $specialCustomerService = app(SpecialCustomerService::class);
+            $isSpecial = $customer ? $specialCustomerService->isSpecialCustomer($customer) : false;
+            $data['is_special'] = $isSpecial;
+            $data['special_badge'] = $isSpecial ? __('Special Customer') : null;
+            $data['wallet_balance'] = $customer?->account_amount ?? 0;
+            return $data;
+        }, 10, 2);
+
+        // POS Product Price Hook - apply wholesale pricing for special customers
+        \App\Classes\Hook::addFilter('ns-pos-product-price', function ($price, $product, $customer) {
+            $specialCustomerService = app(SpecialCustomerService::class);
+            $isSpecial = $customer ? $specialCustomerService->isSpecialCustomer($customer) : false;
+            if ($isSpecial && isset($product->wholesale_price) && $product->wholesale_price > 0) {
+                return [
+                    'wholesale_applied' => true,
+                    'price' => (float) $product->wholesale_price,
+                    'original_price' => (float) $price,
+                    'savings' => (float) ($price - $product->wholesale_price),
+                ];
+            }
+            return $price;
+        }, 10, 3);
+
+        // Order Attributes Hook - append special customer data
+        \App\Classes\Hook::addFilter('ns-order-attributes', function ($order) {
+            try {
+                $customer = $order->customer ?? null;
+                $specialCustomerService = app(SpecialCustomerService::class);
+                $isSpecial = $customer ? $specialCustomerService->isSpecialCustomer($customer) : false;
+                $config = $specialCustomerService->getConfig();
+                $order->special_customer_data = [
+                    'is_special' => $isSpecial,
+                    'group_id' => $config['groupId'] ?? null,
+                ];
+            } catch (\Throwable $e) {
+                // ignore
+            }
+            return $order;
+        });
+
+        // Customer Account History Label Hook - translate references
+        \App\Classes\Hook::addFilter('ns-customer-account-history-label', function ($label, $transaction) {
+            return match ($transaction->reference ?? null) {
+                'ns_special_topup' => __('Special Customer Top-up'),
+                'ns_special_cashback' => __('Special Customer Cashback'),
+                default => $label,
+            };
+        }, 10, 2);
+
         // Order Creation Hook - enforce special customer discount on backend
         // This is the ONLY reliable way to ensure discount is applied
         Hook::addFilter( 'ns-orders-before-create', function ( $fields ) {

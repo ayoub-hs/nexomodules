@@ -252,6 +252,81 @@ class ContainerLedgerService
     }
 
     /**
+     * Get summarized balances for a specific customer.
+     */
+    public function getCustomerBalances(int $customerId): array
+    {
+        $balances = CustomerContainerBalance::with('containerType')
+            ->where('customer_id', $customerId)
+            ->orderByDesc('balance')
+            ->get();
+
+        return $balances->map(function ($b) {
+            $depositFee = $b->containerType->deposit_fee ?? 0;
+            return [
+                'container_type_id' => $b->container_type_id,
+                'container' => $b->containerType->name ?? 'Unknown',
+                'balance' => $b->balance,
+                'deposit_value' => $b->balance * $depositFee,
+                'updated_at' => $b->updated_at,
+            ];
+        })->toArray();
+    }
+
+    /**
+     * Get recent movements for a customer, optionally filtered by container type.
+     */
+    public function getCustomerMovements(int $customerId, ?int $containerTypeId = null, int $limit = 50): array
+    {
+        $query = ContainerMovement::with('containerType')
+            ->where('customer_id', $customerId)
+            ->orderByDesc('created_at');
+
+        if ($containerTypeId) {
+            $query->where('container_type_id', $containerTypeId);
+        }
+
+        return $query->limit($limit)->get()->map(function ($m) {
+            return [
+                'date' => $m->created_at,
+                'container' => $m->containerType->name ?? 'Unknown',
+                'direction' => $m->direction,
+                'quantity' => $m->quantity,
+                'source_type' => $m->source_type,
+                'note' => $m->note,
+            ];
+        })->toArray();
+    }
+
+    /**
+     * Get customers with outstanding balances (> 0), grouped by customer.
+     */
+    public function getCustomersWithOutstandingBalances(): array
+    {
+        $rows = DB::table('ns_customer_container_balances as b')
+            ->join('nexopos_users as c', 'c.id', '=', 'b.customer_id')
+            ->select(
+                'b.customer_id',
+                DB::raw('COALESCE(c.first_name, "Unknown") as first_name'),
+                DB::raw('COALESCE(c.last_name, "") as last_name'),
+                DB::raw('SUM(b.balance) as total_balance')
+            )
+            ->where('b.balance', '>', 0)
+            ->groupBy('b.customer_id')
+            ->orderByDesc('total_balance')
+            ->limit(50)
+            ->get();
+
+        return $rows->map(function ($r) {
+            return [
+                'customer_id' => $r->customer_id,
+                'customer' => trim($r->first_name . ' ' . $r->last_name),
+                'balance' => (int) $r->total_balance,
+            ];
+        })->toArray();
+    }
+
+    /**
      * Recalculate customer balance from movements
      */
     public function recalculateCustomerBalance(int $customerId, int $containerTypeId): CustomerContainerBalance

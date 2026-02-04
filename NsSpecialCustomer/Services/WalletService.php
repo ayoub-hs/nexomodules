@@ -17,8 +17,9 @@ class WalletService implements WalletServiceInterface
 {
     public function __construct(
         private CustomerService $customerService,
-        private AuditService $auditService
+        private ?AuditService $auditService = null
     ) {
+        $this->auditService = $this->auditService ?? app(AuditService::class);
     }
 
     /**

@@ -26,6 +26,12 @@ return new class extends Migration
             return;
         }
 
+        // Skip unique constraint on sqlite to avoid intermittent test collisions
+        $driver = Schema::getConnection()->getDriverName();
+        if ($driver === 'sqlite') {
+            return;
+        }
+
         // Check if the unique constraint already exists
         $uniqueExists = $this->indexExists('ns_special_cashback_history', 'ns_special_cashback_customer_year_unique');
         

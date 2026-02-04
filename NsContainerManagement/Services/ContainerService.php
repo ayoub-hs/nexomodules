@@ -7,6 +7,7 @@ use Modules\NsContainerManagement\Models\ContainerInventory;
 use Modules\NsContainerManagement\Models\ContainerType;
 use Modules\NsContainerManagement\Models\ProductContainer;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Auth;
 
 class ContainerService
 {
@@ -34,6 +35,42 @@ class ContainerService
     }
 
     /**
+     * Create a container type and ensure inventory exists.
+     */
+    public function createContainerType(array $data): ContainerType
+    {
+        $initialStock = $data['initial_stock'] ?? null;
+        unset($data['initial_stock']);
+
+        $containerType = ContainerType::create($data);
+
+        $inventory = ContainerInventory::firstOrCreate(
+            ['container_type_id' => $containerType->id],
+            [
+                'quantity_on_hand' => 0,
+                'quantity_reserved' => 0,
+            ]
+        );
+
+        if ($initialStock !== null) {
+            $inventory->update(['quantity_on_hand' => (int) $initialStock]);
+        }
+
+        return $containerType->fresh(['inventory']);
+    }
+
+    /**
+     * Update a container type.
+     */
+    public function updateContainerType(int $id, array $data): ContainerType
+    {
+        $containerType = ContainerType::findOrFail($id);
+        unset($data['initial_stock']);
+        $containerType->update($data);
+        return $containerType->fresh(['inventory']);
+    }
+
+    /**
      * Link product to a container type
      */
     public function linkProductToContainer(int $productId, int $containerTypeId, ?int $unitId = null): ProductContainer
@@ -53,11 +90,17 @@ class ContainerService
     /**
      * Unlink product from containers
      */
-    public function unlinkProductFromContainer(int $productId, ?int $unitId = null): void
+    public function unlinkProductFromContainer(int $productId, ?int $unitId = null): bool
     {
-        ProductContainer::where('product_id', $productId)
-            ->where('unit_id', $unitId)
-            ->delete();
+        $query = ProductContainer::where('product_id', $productId);
+        if ($unitId === null) {
+            $query->whereNull('unit_id');
+        } else {
+            $query->where('unit_id', $unitId);
+        }
+
+        $deleted = $query->delete();
+        return $deleted > 0;
     }
 
     /**
@@ -119,5 +162,31 @@ class ContainerService
                     'updated_at' => $inventory->updated_at,
                 ];
             });
+    }
+
+    /**
+     * Adjust inventory for a container type.
+     */
+    public function adjustInventory(int $containerTypeId, int $adjustment, string $reason): ContainerInventory
+    {
+        $inventory = ContainerInventory::firstOrCreate(
+            ['container_type_id' => $containerTypeId],
+            [
+                'quantity_on_hand' => 0,
+                'quantity_reserved' => 0,
+                'last_adjustment_date' => null,
+                'last_adjustment_by' => null,
+                'last_adjustment_reason' => null,
+            ]
+        );
+
+        $inventory->update([
+            'quantity_on_hand' => $inventory->quantity_on_hand + $adjustment,
+            'last_adjustment_date' => now(),
+            'last_adjustment_by' => Auth::id() ?? 0,
+            'last_adjustment_reason' => $reason,
+        ]);
+
+        return $inventory->fresh();
     }
 }

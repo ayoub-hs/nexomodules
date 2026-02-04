@@ -8,7 +8,7 @@ use Modules\NsContainerManagement\Http\Controllers\ContainerTypeController;
 use Modules\NsContainerManagement\Http\Controllers\CustomerContainerController;
 use Modules\NsContainerManagement\Http\Controllers\ProductContainerController;
 
-Route::prefix('api/container-management')->middleware(['auth:sanctum'])->group(function () {
+Route::prefix('container-management')->middleware(['auth:sanctum'])->group(function () {
     
     // Container Types
     Route::get('types', [ContainerTypeController::class, 'index']);

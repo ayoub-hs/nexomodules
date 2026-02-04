@@ -4,6 +4,8 @@ namespace Modules\NsSpecialCustomer\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Modules\NsSpecialCustomer\Database\Factories\SpecialCashbackHistoryFactory;
 use App\Models\Customer;
 use App\Models\CustomerAccountHistory;
 use Carbon\Carbon;
@@ -16,7 +18,9 @@ use Carbon\Carbon;
  */
 class SpecialCashbackHistory extends Model
 {
-    protected $table = 'ns_special_cashback_history';
+    use HasFactory;
+
+    protected $table = 'special_cashback_history';
 
     /**
      * The attributes that are mass assignable.
@@ -28,6 +32,12 @@ class SpecialCashbackHistory extends Model
         'total_refunds',
         'cashback_percentage',
         'cashback_amount',
+        // Manual cashback fields
+        'amount',
+        'percentage',
+        'period_start',
+        'period_end',
+        'initiator',
         'transaction_id',
         'status',
         'processed_at',
@@ -39,6 +49,11 @@ class SpecialCashbackHistory extends Model
         'description',
     ];
 
+    protected static function newFactory(): SpecialCashbackHistoryFactory
+    {
+        return SpecialCashbackHistoryFactory::new();
+    }
+
     /**
      * The attributes that should be cast.
      */
@@ -47,6 +62,10 @@ class SpecialCashbackHistory extends Model
         'total_refunds' => 'decimal:5',
         'cashback_percentage' => 'decimal:2',
         'cashback_amount' => 'decimal:5',
+        'amount' => 'decimal:5',
+        'percentage' => 'decimal:2',
+        'period_start' => 'datetime',
+        'period_end' => 'datetime',
         'processed_at' => 'datetime',
         'reversed_at' => 'datetime',
         'created_at' => 'datetime',
@@ -87,17 +106,17 @@ class SpecialCashbackHistory extends Model
     }
 
     /**
-     * Get the author who processed the cashback.
+     * Get the author user who processed the cashback.
      */
-    public function author(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    public function authorUser(): \Illuminate\Database\Eloquent\Relations\BelongsTo
     {
         return $this->belongsTo('App\Models\User', 'author');
     }
 
     /**
-     * Get the author who reversed the cashback.
+     * Get the author user who reversed the cashback.
      */
-    public function reversalAuthor(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    public function reversalAuthorUser(): \Illuminate\Database\Eloquent\Relations\BelongsTo
     {
         return $this->belongsTo('App\Models\User', 'reversal_author');
     }
@@ -291,6 +310,18 @@ class SpecialCashbackHistory extends Model
             }
             if (empty($cashback->author)) {
                 $cashback->author = auth()->id();
+            }
+            // Ensure year is set based on period_start when creating manual entries
+            if (empty($cashback->year)) {
+                if (! empty($cashback->period_start)) {
+                    try {
+                        $cashback->year = Carbon::parse($cashback->period_start)->year;
+                    } catch (\Throwable $e) {
+                        $cashback->year = now()->year;
+                    }
+                } else {
+                    $cashback->year = now()->year;
+                }
             }
         });
 

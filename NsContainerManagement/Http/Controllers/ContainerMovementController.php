@@ -20,6 +20,14 @@ class ContainerMovementController extends Controller
      */
     public function give(Request $request): JsonResponse
     {
+        // Ensure JSON/body payload is available in input for validation
+        $request->merge($request->json()->all());
+        if (! $request->has('container_type_id') || ! $request->has('customer_id') || ! $request->has('quantity')) {
+            $raw = json_decode($request->getContent() ?? '', true);
+            if (is_array($raw)) {
+                $request->merge($raw);
+            }
+        }
         $validated = $request->validate([
             'customer_id' => 'required|exists:nexopos_users,id',
             'container_type_id' => 'required|exists:ns_container_types,id',
@@ -49,6 +57,14 @@ class ContainerMovementController extends Controller
      */
     public function receive(Request $request): JsonResponse
     {
+        // Ensure JSON/body payload is available in input for validation
+        $request->merge($request->json()->all());
+        if (! $request->has('container_type_id') || ! $request->has('customer_id') || ! $request->has('quantity')) {
+            $raw = json_decode($request->getContent() ?? '', true);
+            if (is_array($raw)) {
+                $request->merge($raw);
+            }
+        }
         $validated = $request->validate([
             'customer_id' => 'required|exists:nexopos_users,id',
             'container_type_id' => 'required|exists:ns_container_types,id',
