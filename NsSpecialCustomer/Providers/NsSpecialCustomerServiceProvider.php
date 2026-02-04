@@ -52,15 +52,11 @@ class NsSpecialCustomerServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        $this->loadMigrationsFrom( __DIR__ . '/../Database/Migrations' );
+        
         $this->loadViewsFrom( __DIR__ . '/../Resources/Views', 'NsSpecialCustomer' );
         $this->loadRoutesFrom( __DIR__ . '/../Routes/api.php' );
         $this->loadRoutesFrom( __DIR__ . '/../Routes/web.php' );
 
-        // Load module permissions (legacy format)
-        if ( defined( 'NEXO_CREATE_PERMISSIONS' ) ) {
-            include_once dirname( __FILE__ ) . '/../Database/Permissions/special-customer.php';
-        }
 
         // View composer for all module views
         View::composer( 'NsSpecialCustomer::*', function ( $view ) {

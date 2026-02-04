@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\Permission;
+use App\Models\Role;
 use Illuminate\Database\Migrations\Migration;
 
 return new class extends Migration
@@ -105,6 +106,39 @@ return new class extends Migration
             __('Export Container Reports'),
             __('Let the user export container reports')
         );
+
+        // Assign all container permissions to Admin and Store Admin roles
+        try {
+            $namespaces = [
+                'nexopos.create.container-types',
+                'nexopos.read.container-types',
+                'nexopos.update.container-types',
+                'nexopos.delete.container-types',
+                'nexopos.create.containers',
+                'nexopos.read.containers',
+                'nexopos.update.containers',
+                'nexopos.delete.containers',
+                'nexopos.manage.container-inventory',
+                'nexopos.adjust.container-stock',
+                'nexopos.receive.containers',
+                'nexopos.view.container-customers',
+                'nexopos.charge.containers',
+                'nexopos.view.container-reports',
+                'nexopos.export.container-reports',
+            ];
+
+            $admin = Role::namespace(Role::ADMIN);
+            if ($admin) {
+                $admin->addPermissions($namespaces);
+            }
+
+            $storeAdmin = Role::namespace(Role::STOREADMIN);
+            if ($storeAdmin) {
+                $storeAdmin->addPermissions($namespaces);
+            }
+        } catch (\Throwable $e) {
+            // roles may not exist yet during fresh install
+        }
     }
 
     /**
