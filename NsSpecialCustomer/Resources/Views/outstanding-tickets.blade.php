@@ -10,6 +10,7 @@
         </div>
         <ns-crud
             src="{{ url('api/crud/ns.outstanding-tickets') }}"
+            identifier="ns.outstanding-tickets"
             :show-create-button="false">
         </ns-crud>
     </div>

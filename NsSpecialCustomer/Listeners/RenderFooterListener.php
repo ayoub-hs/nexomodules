@@ -7,6 +7,7 @@ use Modules\NsSpecialCustomer\Services\SpecialCustomerService;
 
 class RenderFooterListener
 {
+    private static bool $outstandingInjected = false;
     private SpecialCustomerService $specialCustomerService;
 
     public function __construct(SpecialCustomerService $specialCustomerService)
@@ -36,14 +37,18 @@ class RenderFooterListener
             $event->output->addView('NsSpecialCustomer::pos.wallet-balance-widget', $options);
         }
 
-        // Register Vue components for outstanding tickets page
+        // Register Vue components and footer script for outstanding tickets page
         // Check for multiple route patterns to ensure component loads
         if (
-            $event->routeName === 'ns.dashboard.special-customer-outstanding' ||
-            str_contains($event->routeName ?? '', 'special-customer-outstanding') ||
-            str_contains($event->routeName ?? '', 'outstanding-tickets')
+            ! self::$outstandingInjected && (
+                $event->routeName === 'ns.dashboard.special-customer-outstanding' ||
+                str_contains($event->routeName ?? '', 'special-customer-outstanding') ||
+                str_contains($event->routeName ?? '', 'outstanding-tickets')
+            )
         ) {
+            self::$outstandingInjected = true;
             $event->output->addView('NsSpecialCustomer::components-registration');
+           $event->output->addView('NsSpecialCustomer::outstanding-tickets-footer');
         }
     }
 }

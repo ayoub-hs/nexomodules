@@ -294,23 +294,13 @@ class OutstandingTicketCrud extends CrudService
                 $entry->action(
                     label: __( 'Pay From Wallet' ),
                     identifier: 'pay_from_wallet',
-                    type: 'POPUP',
-                    component: 'nsOutstandingTicketPayment',
-                    url: ns()->url( '/dashboard/special-customer/outstanding-tickets/payment/' . $entry->id )
+                    url: ns()->url( '/dashboard/special-customer/outstanding-tickets/payment/' . $entry->id ),
+                    type: 'POPUP'
                 );
+                $entry->values['$actions']['pay_from_wallet']['component'] = 'nsOutstandingTicketPayment';
             }
         }
 
-        // Add regular "Pay" action if user has permission and there's an amount due
-        if ( $dueAmount > 0 && $hasPermission ) {
-            $entry->action(
-                label: __( 'Pay' ),
-                identifier: 'pay_order',
-                type: 'POPUP',
-                component: 'nsOutstandingTicketPayment',
-                url: ns()->url( '/dashboard/special-customer/outstanding-tickets/payment/' . $entry->id )
-            );
-        }
 
         // Add view order action
         $entry->action(

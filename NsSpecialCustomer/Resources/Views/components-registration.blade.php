@@ -6,6 +6,10 @@
 (function() {
     'use strict';
 
+    if (typeof window !== 'undefined' && window.nsExtraComponents && window.nsExtraComponents['nsOutstandingTicketPayment']) {
+        return;
+    }
+
     console.log('[NsSpecialCustomer] Initializing component registration...');
 
     // Define the Outstanding Ticket Payment Popup Component
@@ -152,7 +156,7 @@
                 
                 if (!ticketId) {
                     console.error('[OutstandingTicketPopup] Ticket ID is missing');
-                    window.nsSnackBar.error('{{ __("Ticket ID is missing") }}').subscribe();
+                    window.nsSnackBar.error('{{ __("Ticket ID is missing") }}');
                     this.closePopup();
                     return;
                 }
@@ -179,7 +183,7 @@
                         },
                         error: (error) => {
                             console.error('[OutstandingTicketPopup] Failed to load order', error);
-                            window.nsSnackBar.error('{{ __("Failed to load ticket details") }}').subscribe();
+                            window.nsSnackBar.error('{{ __("Failed to load ticket details") }}');
                             this.isLoading = false;
                             this.closePopup();
                         }
@@ -238,13 +242,13 @@
                     next: (response) => {
                         console.log('[OutstandingTicketPopup] Payment successful', response);
                         this.isSubmitting = false;
-                        window.nsSnackBar.success(response.message || '{{ __("Payment processed successfully") }}').subscribe();
+                        window.nsSnackBar.success(response.message || '{{ __("Payment processed successfully") }}');
                         this.closePopup();
                         
-                        // Refresh CRUD Table
-                        if (window.nsCrud) {
-                            console.log('[OutstandingTicketPopup] Refreshing CRUD table');
-                            window.nsCrud.refresh();
+                        const crud = window.nsCrudHandler?.getInstance('ns.outstanding-tickets');
+                        if (crud && typeof crud.refresh === 'function') {
+                            console.log('[OutstandingTicketPopup] Refreshing CRUD table via nsCrudHandler');
+                            crud.refresh();
                         } else {
                             console.log('[OutstandingTicketPopup] Reloading page');
                             window.location.reload();
@@ -254,7 +258,7 @@
                         console.error('[OutstandingTicketPopup] Payment failed', error);
                         this.isSubmitting = false;
                         const msg = error.response?.data?.message || error.message || '{{ __("Payment failed") }}';
-                        window.nsSnackBar.error(msg).subscribe();
+                        window.nsSnackBar.error(msg);
                     }
                 });
             }
