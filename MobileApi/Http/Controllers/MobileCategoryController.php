@@ -6,6 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Models\Product;
 use App\Models\ProductCategory;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Str;
+use Modules\MobileApi\Support\MobileProductTransformer;
 
 /**
  * Mobile Category API Controller
@@ -15,6 +18,28 @@ use Illuminate\Http\Request;
  */
 class MobileCategoryController extends Controller
 {
+    public function __construct(
+        protected MobileProductTransformer $productTransformer
+    ) {
+    }
+
+    /**
+     * Get all POS-visible categories for the mobile POS tab bar.
+     *
+     * GET /api/mobile/categories
+     */
+    public function index(Request $request)
+    {
+        $categories = ProductCategory::displayOnPOS()
+            ->select(['id', 'name', 'description', 'updated_at'])
+            ->withCount('products')
+            ->orderBy('name')
+            ->get()
+            ->map(fn ($category) => $this->transformCategory($category));
+
+        return response()->json($categories);
+    }
+
     /**
      * Get products for a category with all unit quantities bundled
      * 
@@ -22,12 +47,55 @@ class MobileCategoryController extends Controller
      */
     public function products(Request $request, int $id)
     {
-        $category = ProductCategory::find($id);
-        
+        return response()->json($this->buildCategoryProductsResponse($id));
+    }
+
+    /**
+     * Get products by category for mobile catalog
+     *
+     * GET /api/mobile/catalog/category/{id}
+     * If ID is 0, returns all products
+     */
+    public function getCategoryProducts($id, Request $request)
+    {
+        return response()->json($this->buildCategoryProductsResponse((int) $id));
+    }
+
+    private function buildCategoryProductsResponse(int $id): array
+    {
+        if ($id === 0) {
+            $products = Product::with(['unit_quantities.unit'])
+                ->onSale()
+                ->excludeVariations()
+                ->select([
+                'id', 'name', 'barcode', 'barcode_type', 'sku',
+                    'status', 'category_id', 'updated_at'
+                ])
+                ->orderBy('name')
+                ->get();
+
+            $lastUpdated = Product::max('updated_at');
+
+            return [
+                'category' => [
+                    'id' => 0,
+                    'name' => 'All Products',
+                    'description' => null,
+                    'products_count' => $products->count(),
+                    'display_order' => 0,
+                ],
+                'products' => $this->productTransformer->transformProducts($products),
+                'last_updated' => $this->formatTimestamp($lastUpdated),
+            ];
+        }
+
+        $category = ProductCategory::displayOnPOS()
+            ->withCount('products')
+            ->whereKey($id)
+            ->first();
+
         if (!$category) {
-            return response()->json([
-                'error' => 'Category not found',
-            ], 404);
+            abort(404, 'Category not found');
         }
 
         $products = Product::with(['unit_quantities.unit'])
@@ -39,52 +107,39 @@ class MobileCategoryController extends Controller
                 'status', 'category_id', 'updated_at'
             ])
             ->orderBy('name')
-            ->get()
-            ->map(fn($product) => $this->transformProduct($product));
+            ->get();
 
         $lastUpdated = Product::where('category_id', $id)->max('updated_at');
 
-        return response()->json([
-            'category' => [
-                'id' => $category->id,
-                'name' => $category->name,
-                'description' => $category->description,
-                'products_count' => $products->count(),
-                'display_order' => 0,
-            ],
-            'products' => $products,
-            'last_updated' => $lastUpdated,
-        ]);
+        return [
+            'category' => $this->transformCategory($category, $products->count()),
+            'products' => $this->productTransformer->transformProducts($products),
+            'last_updated' => $this->formatTimestamp($lastUpdated),
+        ];
     }
 
-    /**
-     * Transform product for mobile API response
-     */
-    private function transformProduct(Product $product): array
+    private function transformCategory(ProductCategory $category, ?int $productsCount = null): array
     {
         return [
-            'id' => $product->id,
-            'name' => $product->name,
-            'barcode' => $product->barcode,
-            'barcode_type' => $product->barcode_type,
-            'sku' => $product->sku,
-            'status' => $product->status,
-            'category_id' => $product->category_id,
-            'unit_quantities' => $product->unit_quantities->map(fn($uq) => [
-                'id' => $uq->id,
-                'unit_id' => $uq->unit_id,
-                'barcode' => $uq->barcode,
-                'sale_price' => (float) $uq->sale_price,
-                'wholesale_price' => (float) $uq->wholesale_price,
-                'wholesale_price_edit' => (float) $uq->wholesale_price_edit,
-                'unit' => $uq->unit ? [
-                    'id' => $uq->unit->id,
-                    'name' => $uq->unit->name,
-                    'identifier' => $uq->unit->identifier,
-                ] : null,
-            ])->toArray(),
-            'updated_at' => $product->updated_at?->format('Y-m-d H:i:s'),
-            'deleted_at' => null,
+            'id' => $category->id,
+            'name' => $category->name,
+            'slug' => Str::slug($category->name),
+            'description' => $category->description,
+            'products_count' => $productsCount ?? $category->products_count ?? 0,
+            'display_order' => 0,
         ];
+    }
+
+    private function formatTimestamp(mixed $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if ($value instanceof Carbon) {
+            return $value->format('Y-m-d H:i:s');
+        }
+
+        return Carbon::parse((string) $value)->format('Y-m-d H:i:s');
     }
 }

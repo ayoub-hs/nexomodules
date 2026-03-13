@@ -2,6 +2,7 @@
 
 use App\Models\Permission;
 use App\Models\Role;
+use App\Classes\Schema;
 use Illuminate\Database\Migrations\Migration;
 
 return new class extends Migration
@@ -11,6 +12,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (! Schema::hasTable('nexopos_permissions')) {
+            return;
+        }
+
         // Container Types Permissions
         $this->createPermission(
             'nexopos.create.container-types',
@@ -146,6 +151,10 @@ return new class extends Migration
      */
     public function down(): void
     {
+        if (! Schema::hasTable('nexopos_permissions')) {
+            return;
+        }
+
         $permissions = [
             'nexopos.create.container-types',
             'nexopos.read.container-types',

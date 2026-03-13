@@ -30,8 +30,8 @@ class ContainerReportController extends Controller
         }
 
         $movements = $query->select(
-            DB::raw('SUM(CASE WHEN direction = "out" THEN quantity ELSE 0 END) as total_out'),
-            DB::raw('SUM(CASE WHEN direction = "in" THEN quantity ELSE 0 END) as total_in'),
+            DB::raw("SUM(CASE WHEN direction = 'out' THEN quantity ELSE 0 END) as total_out"),
+            DB::raw("SUM(CASE WHEN direction = 'in' THEN quantity ELSE 0 END) as total_in"),
             DB::raw('SUM(total_deposit_value) as total_deposit')
         )->first();
 
@@ -102,8 +102,8 @@ class ContainerReportController extends Controller
             $query->where('container_type_id', $request->type_id);
         }
 
-        $perPage = $request->get('per_page', 20);
-        $page = $request->get('page', 1);
+        $perPage = max(1, min(100, (int) $request->get('per_page', 20)));
+        $page = max(1, (int) $request->get('page', 1));
 
         $charges = $query->orderByDesc('created_at')
             ->paginate($perPage, ['*'], 'page', $page);
@@ -112,7 +112,7 @@ class ContainerReportController extends Controller
             'data' => $charges->getCollection()->map(function ($charge) {
                 return [
                     'date' => $charge->created_at->format('Y-m-d H:i'),
-                    'customer' => $charge->customer->first_name . ' ' . $charge->customer->last_name,
+                    'customer' => $this->formatCustomerName($charge->customer),
                     'container' => $charge->containerType->name ?? 'Unknown',
                     'quantity' => $charge->quantity,
                     'amount' => $charge->total_deposit_value,
@@ -165,7 +165,7 @@ class ContainerReportController extends Controller
         $rows = $movements->map(function ($movement) {
             return [
                 $movement->created_at->format('Y-m-d H:i:s'),
-                $movement->customer ? $movement->customer->first_name . ' ' . $movement->customer->last_name : 'N/A',
+                $this->formatCustomerName($movement->customer),
                 $movement->containerType ? $movement->containerType->name : 'Unknown',
                 $movement->direction,
                 $movement->quantity,
@@ -215,7 +215,7 @@ class ContainerReportController extends Controller
         $rows = $charges->map(function ($charge) {
             return [
                 $charge->created_at->format('Y-m-d H:i:s'),
-                $charge->customer ? $charge->customer->first_name . ' ' . $charge->customer->last_name : 'N/A',
+                $this->formatCustomerName($charge->customer),
                 $charge->containerType ? $charge->containerType->name : 'Unknown',
                 $charge->quantity,
                 $charge->total_deposit_value,
@@ -256,7 +256,7 @@ class ContainerReportController extends Controller
         $headers = ['Customer', 'Container Type', 'Balance', 'Total Out', 'Total In', 'Total Charged', 'Last Movement'];
         $rows = $balances->map(function ($balance) {
             return [
-                $balance->customer ? $balance->customer->first_name . ' ' . $balance->customer->last_name : 'N/A',
+                $this->formatCustomerName($balance->customer),
                 $balance->containerType ? $balance->containerType->name : 'Unknown',
                 $balance->balance,
                 $balance->total_out,
@@ -279,5 +279,16 @@ class ContainerReportController extends Controller
             'Content-Type' => 'text/csv',
             'Content-Disposition' => 'attachment; filename="container-balances.csv"',
         ]);
+    }
+
+    private function formatCustomerName($customer): string
+    {
+        if (! $customer) {
+            return 'N/A';
+        }
+
+        $name = trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? ''));
+
+        return $name !== '' ? $name : (($customer->username ?? 'N/A'));
     }
 }

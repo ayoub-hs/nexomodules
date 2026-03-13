@@ -413,6 +413,8 @@
 let movementsPage = 1;
 let balancesPage = 1;
 let currentTab = 'movements';
+let autoDateDefaults = { from: null, to: null };
+let dateFiltersTouched = { from: false, to: false };
 
 document.addEventListener('DOMContentLoaded', function () {
 
@@ -496,14 +498,25 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function initializeFilters() {
-        // Set default date range (last 30 days)
-        const today = new Date();
-        const thirtyDaysAgo = new Date(today.getTime() - (30 * 24 * 60 * 60 * 1000));
-        
-        document.getElementById('to-date').value = today.toISOString().split('T')[0];
+        syncAutoDateRange(true);
     }
 
     function wireUpEventListeners() {
+        const fromDateInput = document.getElementById('from-date');
+        const toDateInput = document.getElementById('to-date');
+
+        if (fromDateInput) {
+            fromDateInput.addEventListener('change', () => {
+                dateFiltersTouched.from = true;
+            });
+        }
+
+        if (toDateInput) {
+            toDateInput.addEventListener('change', () => {
+                dateFiltersTouched.to = true;
+            });
+        }
+
         // Filter controls
         const applyBtn = document.getElementById('apply-filters');
         if (applyBtn) applyBtn.onclick = () => {
@@ -518,6 +531,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         const resetBtn = document.getElementById('reset-filters');
         if (resetBtn) resetBtn.onclick = () => {
+            dateFiltersTouched = { from: false, to: false };
             initializeFilters();
             movementsPage = 1;
             balancesPage = 1;
@@ -857,6 +871,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function query(extra = {}) {
+        syncAutoDateRange();
         return new URLSearchParams({
             from: document.getElementById('from-date').value,
             to: document.getElementById('to-date').value,
@@ -885,6 +900,49 @@ document.addEventListener('DOMContentLoaded', function () {
             case 'adjustment': return 'direction-adjustment';
             default: return 'direction-out';
         }
+    }
+
+    function syncAutoDateRange(force = false) {
+        const fromInput = document.getElementById('from-date');
+        const toInput = document.getElementById('to-date');
+        if (!fromInput || !toInput) {
+            return;
+        }
+
+        const now = new Date();
+        const today = toDateInputValue(now);
+        const thirtyDaysAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+        const fromDefault = toDateInputValue(thirtyDaysAgo);
+
+        const shouldUpdateTo = force
+            || !toInput.value
+            || (!dateFiltersTouched.to && (autoDateDefaults.to === null || toInput.value === autoDateDefaults.to));
+
+        const shouldUpdateFrom = force
+            || !fromInput.value
+            || (!dateFiltersTouched.from && (autoDateDefaults.from === null || fromInput.value === autoDateDefaults.from));
+
+        if (shouldUpdateTo) {
+            toInput.value = today;
+            dateFiltersTouched.to = false;
+        }
+
+        if (shouldUpdateFrom) {
+            fromInput.value = fromDefault;
+            dateFiltersTouched.from = false;
+        }
+
+        autoDateDefaults = {
+            from: fromInput.value,
+            to: toInput.value,
+        };
+    }
+
+    function toDateInputValue(date) {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
     }
 
 });

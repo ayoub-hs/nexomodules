@@ -28,7 +28,7 @@ return new class extends Migration
         }
 
         Schema::table('nexopos_customers_account_history', function (Blueprint $table) {
-            $table->string('reference')->nullable()->after('description')->comment('Transaction reference for tracking');
+            $table->string('reference')->nullable()->comment('Transaction reference for tracking');
         });
     }
 

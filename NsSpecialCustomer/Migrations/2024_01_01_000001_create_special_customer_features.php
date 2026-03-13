@@ -46,7 +46,7 @@ return new class extends Migration
                 $specialGroup = new CustomerGroup();
                 $specialGroup->name = 'Special';
                 $specialGroup->description = 'Premium customer group with wholesale pricing, special discounts, and yearly cashback rewards';
-                $specialGroup->author = 1; // Set author to admin user (ID 1)
+                $specialGroup->author = $this->resolveDefaultAuthorId();
                 $specialGroup->save();
 
                 // Store the group ID in options for the service
@@ -206,6 +206,20 @@ return new class extends Migration
     }
 
     /**
+     * Resolve a safe default author ID when available.
+     */
+    private function resolveDefaultAuthorId(): ?int
+    {
+        if (!Schema::hasTable('nexopos_users')) {
+            return null;
+        }
+
+        $authorId = DB::table('nexopos_users')->orderBy('id')->value('id');
+
+        return $authorId !== null ? (int) $authorId : null;
+    }
+
+    /**
      * Reverse the migration.
      */
     public function down(): void
@@ -226,20 +240,22 @@ return new class extends Migration
             Schema::dropIfExists('special_cashback_history');
 
             // Remove configuration options
-            $optionClass = config('nexopos.options', 'App\Models\Option');
-            $configKeys = [
-                'ns_special_customer_group_id',
-                'ns_special_discount_percentage',
-                'ns_special_cashback_percentage',
-                'ns_special_apply_discount_stackable',
-                'ns_special_min_order_amount',
-                'ns_special_max_topup_amount',
-                'ns_special_min_topup_amount',
-                'ns_special_enable_auto_cashback',
-                'ns_special_cashback_processing_month',
-            ];
-            
-            $optionClass::whereIn('key', $configKeys)->delete();
+            if (Schema::hasTable('nexopos_options')) {
+                $optionClass = config('nexopos.options', 'App\Models\Option');
+                $configKeys = [
+                    'ns_special_customer_group_id',
+                    'ns_special_discount_percentage',
+                    'ns_special_cashback_percentage',
+                    'ns_special_apply_discount_stackable',
+                    'ns_special_min_order_amount',
+                    'ns_special_max_topup_amount',
+                    'ns_special_min_topup_amount',
+                    'ns_special_enable_auto_cashback',
+                    'ns_special_cashback_processing_month',
+                ];
+
+                $optionClass::whereIn('key', $configKeys)->delete();
+            }
 
             // Note: We don't delete the customer group itself as it might contain customers
             // The group can be manually deleted if needed after ensuring no customers are assigned

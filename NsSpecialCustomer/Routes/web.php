@@ -3,7 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use Modules\NsSpecialCustomer\Http\Controllers\SpecialCustomerController;
 
-$isTesting = app()->runningUnitTests() || app()->environment('testing') || strtolower((string) env('APP_ENV')) === 'testing';
+$isTesting = app()->runningUnitTests() || app()->environment('testing');
 
 $middlewares = [
     'web',
@@ -21,7 +21,7 @@ if ($isTesting) {
 Route::prefix( 'dashboard/special-customer' )->middleware( $middlewares )->group( function () {
     // Main entry point - dashboard page
     Route::get( '/', function () {
-        $testing = app()->runningUnitTests() || app()->environment('testing') || strtolower((string) env('APP_ENV')) === 'testing';
+        $testing = app()->runningUnitTests() || app()->environment('testing');
         if ($testing) {
             return response(implode("\n", [
                 __('Special Customer Dashboard'),

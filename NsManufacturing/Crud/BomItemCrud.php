@@ -154,10 +154,7 @@ class BomItemCrud extends CrudService
     private function getProducts() {
         return Helper::kvToJsOptions(
             \App\Models\Product::where('status', 'available')
-                ->where(function($query) {
-                    $query->where('is_manufactured', true)
-                          ->orWhere('is_raw_material', true);
-                })
+                ->where('is_raw_material', true)
                 ->limit(500)
                 ->pluck('name', 'id')
                 ->toArray()

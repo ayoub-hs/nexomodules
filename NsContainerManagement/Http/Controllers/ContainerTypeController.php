@@ -5,6 +5,7 @@ namespace Modules\NsContainerManagement\Http\Controllers;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Modules\NsContainerManagement\Http\Requests\CreateContainerTypeRequest;
 use Modules\NsContainerManagement\Models\ContainerType;
 use Modules\NsContainerManagement\Services\ContainerService;
 
@@ -36,20 +37,9 @@ class ContainerTypeController extends Controller
     /**
      * POST /api/container-management/types
      */
-    public function store(Request $request): JsonResponse
+    public function store(CreateContainerTypeRequest $request): JsonResponse
     {
-        if ($request->isJson()) {
-            $request->merge($request->json()->all());
-        }
-        $validated = $request->validate([
-            'name' => 'required|string|max:100',
-            'capacity' => 'required|numeric|min:0.001',
-            'capacity_unit' => 'required|string|max:20',
-            'deposit_fee' => 'required|numeric|min:0',
-            'description' => 'nullable|string',
-            'is_active' => 'boolean',
-            'initial_stock' => 'integer|min:0',
-        ]);
+        $validated = $request->validated();
 
         $containerType = $this->containerService->createContainerType($validated);
 
@@ -76,19 +66,9 @@ class ContainerTypeController extends Controller
     /**
      * PUT /api/container-management/types/{id}
      */
-    public function update(Request $request, int $id): JsonResponse
+    public function update(CreateContainerTypeRequest $request, int $id): JsonResponse
     {
-        if ($request->isJson()) {
-            $request->merge($request->json()->all());
-        }
-        $validated = $request->validate([
-            'name' => 'string|max:100',
-            'capacity' => 'numeric|min:0.001',
-            'capacity_unit' => 'string|max:20',
-            'deposit_fee' => 'numeric|min:0',
-            'description' => 'nullable|string',
-            'is_active' => 'boolean',
-        ]);
+        $validated = $request->validated();
 
         $containerType = $this->containerService->updateContainerType($id, $validated);
 

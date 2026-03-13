@@ -5,6 +5,7 @@ namespace Modules\NsContainerManagement\Services;
 use App\Models\Customer;
 use App\Models\Order;
 use App\Services\OrdersService;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Modules\NsContainerManagement\Models\ContainerType;
@@ -12,6 +13,7 @@ use Modules\NsContainerManagement\Models\ContainerInventory;
 use Modules\NsContainerManagement\Models\ContainerMovement;
 use Modules\NsContainerManagement\Models\CustomerContainerBalance;
 use Modules\NsContainerManagement\Models\ProductContainer;
+use App\Models\Unit;
 
 class ContainerLedgerService
 {
@@ -93,15 +95,26 @@ class ContainerLedgerService
 
     /**
      * Handle the side effects of a movement (Inventory & Balance)
-     * This is triggered by ContainerMovement model created event
-     * 
-     * NOTE: This method is now deprecated as movements are handled atomically
-     * in recordContainerOut/In methods. Kept for backward compatibility.
+     * Called by ContainerMovement::booted() after every create.
+     *
+     * For 'adjustment' direction: updates inventory using the signed quantity
+     * (positive = add stock, negative = remove stock).
+     * For other directions (out, in, charge): handled atomically inside
+     * recordContainerOut / recordContainerIn — nothing to do here.
      */
     public function handleMovementEffect(ContainerMovement $movement): void
     {
-        // This method is kept for backward compatibility but should not be called
-        // as movements are now handled atomically in recordContainerOut/In methods
+        if ($movement->direction === ContainerMovement::DIRECTION_ADJUSTMENT) {
+            $this->adjustInventoryQuantity($movement->container_type_id, $movement->quantity);
+
+            ContainerInventory::where('container_type_id', $movement->container_type_id)
+                ->update([
+                    'last_adjustment_date'   => now(),
+                    'last_adjustment_by'     => $movement->author,
+                    'last_adjustment_reason' => $movement->note,
+                ]);
+        }
+        // out / in / charge are already handled inside their respective transaction methods.
     }
 
     /**
@@ -118,6 +131,14 @@ class ContainerLedgerService
             $customer = Customer::findOrFail($customerId);
             $totalCharge = $quantity * $containerType->deposit_fee;
 
+            // Fetch default POS quick product unit
+            $defaultUnitId = ns()->option->get('ns_pos_quick_product_default_unit', 0);
+            $unit = $defaultUnitId ? Unit::find($defaultUnitId) : Unit::first();
+            
+            if (!$unit) {
+                throw new \Exception(__('No valid unit found for container charge. Please configure a default POS unit.'));
+            }
+
             // Create POS Order for the charge
             $orderData = [
                 'customer_id' => $customerId,
@@ -127,10 +148,23 @@ class ContainerLedgerService
                         'quantity' => $quantity,
                         'unit_price' => $containerType->deposit_fee,
                         'total_price' => $totalCharge,
+                        'price_with_tax' => $containerType->deposit_fee,
+                        'price_without_tax' => $containerType->deposit_fee,
                         'mode' => 'custom',
+                        'unit_id' => $unit->id,
+                        'unit_name' => $unit->name,
+                        'unit_quantity_id' => 0,
+                        'product_id' => 0,
+                        'product' => (object) [ 
+                            'id' => 0, 
+                            'category_id' => 0, 
+                            'name' => "Container Deposit Charge: {$containerType->name}",
+                            'tax_group_id' => 0,
+                        ],
                     ],
                 ],
                 'payments' => [],
+                'type' => [ 'identifier' => 'standard' ],
                 'title' => "Container Charge - {$customer->first_name} {$customer->last_name}",
                 'note' => $note ?? "Charge for unreturned {$containerType->name} containers",
             ];
@@ -172,22 +206,10 @@ class ContainerLedgerService
     {
         $query = ProductContainer::with('containerType')
             ->where('product_id', $productId)
-            ->where('is_enabled', true);
-            
-        if ($unitId !== null) {
-            $query->where('unit_id', $unitId);
-        }
+            ->where('is_enabled', true)
+            ->where('unit_quantity_id', $unitId); // $unitId here is the unit_quantity_id passed from POS
 
         $productContainer = $query->first();
-
-        // If not found with unit and unit was provided, try product-wide (unit_id = null)
-        if (!$productContainer && $unitId !== null) {
-            $productContainer = ProductContainer::with('containerType')
-                ->where('product_id', $productId)
-                ->whereNull('unit_id')
-                ->where('is_enabled', true)
-                ->first();
-        }
 
         if (!$productContainer || !$productContainer->containerType->is_active) {
             return null;
@@ -212,21 +234,27 @@ class ContainerLedgerService
      */
     public function getMovements($from = null, $to = null, $page = 1, $perPage = 20, $customerId = null, $typeId = null)
     {
+        [$page, $perPage] = $this->normalizePagination($page, $perPage);
+        $offset = ($page - 1) * $perPage;
+        $prefix = DB::getTablePrefix();
+        $mAlias = $prefix . 'm';
+        $cAlias = $prefix . 'c';
+        $tAlias = $prefix . 't';
+
         $query = DB::table('ns_container_movements as m')
             ->leftJoin('nexopos_users as c', 'c.id', '=', 'm.customer_id')
             ->leftJoin('ns_container_types as t', 't.id', '=', 'm.container_type_id')
             ->select(
-                DB::raw('DATE_FORMAT(m.created_at, "%Y-%m-%d %H:%i") as date'),
-                DB::raw('COALESCE(c.first_name, "N/A") as customer'),
-                DB::raw('COALESCE(t.name, "Unknown") as container'),
+                'm.id',
+                'm.created_at',
+                DB::raw("COALESCE({$cAlias}.first_name, 'N/A') as customer"),
+                DB::raw("COALESCE({$tAlias}.name, 'Unknown') as container"),
                 'm.quantity',
                 'm.direction',
                 'm.source_type',
                 'm.note'
-            )
-            ->orderByDesc('m.id');
+            );
 
-        // Apply filters
         if ($from) {
             $query->whereDate('m.created_at', '>=', $from);
         }
@@ -234,20 +262,30 @@ class ContainerLedgerService
             $query->whereDate('m.created_at', '<=', $to);
         }
         if ($customerId) {
-            $query->where('m.customer_id', $customerId);
+            $query->where('m.customer_id', (int) $customerId);
         }
         if ($typeId) {
-            $query->where('m.container_type_id', $typeId);
+            $query->where('m.container_type_id', (int) $typeId);
         }
 
-        $paginated = $query->paginate($perPage, ['*'], 'page', $page);
+        $total = (clone $query)->count();
+        $data = $query->orderByDesc('m.id')
+            ->offset($offset)
+            ->limit($perPage)
+            ->get()
+            ->map(function ($row) {
+                $row->date = (string) $row->created_at;
+                return $row;
+            })
+            ->values()
+            ->all();
 
         return [
-            'data' => $paginated->items(),
-            'total' => $paginated->total(),
-            'per_page' => $paginated->perPage(),
-            'current_page' => $paginated->currentPage(),
-            'last_page' => $paginated->lastPage(),
+            'data'         => $data,
+            'total'        => (int) $total,
+            'per_page'     => $perPage,
+            'current_page' => $page,
+            'last_page'    => (int) ceil($total / $perPage),
         ];
     }
 
@@ -303,16 +341,20 @@ class ContainerLedgerService
      */
     public function getCustomersWithOutstandingBalances(): array
     {
+        $prefix = DB::getTablePrefix();
+        $bAlias = $prefix . 'b';
+        $cAlias = $prefix . 'c';
+
         $rows = DB::table('ns_customer_container_balances as b')
             ->join('nexopos_users as c', 'c.id', '=', 'b.customer_id')
             ->select(
                 'b.customer_id',
-                DB::raw('COALESCE(c.first_name, "Unknown") as first_name'),
-                DB::raw('COALESCE(c.last_name, "") as last_name'),
-                DB::raw('SUM(b.balance) as total_balance')
+                DB::raw("COALESCE({$cAlias}.first_name, 'Unknown') as first_name"),
+                DB::raw("COALESCE({$cAlias}.last_name, '') as last_name"),
+                DB::raw("SUM({$bAlias}.balance) as total_balance")
             )
             ->where('b.balance', '>', 0)
-            ->groupBy('b.customer_id')
+            ->groupBy('b.customer_id', 'c.first_name', 'c.last_name')
             ->orderByDesc('total_balance')
             ->limit(50)
             ->get();
@@ -362,19 +404,24 @@ class ContainerLedgerService
      */
     public function getBalances($from = null, $to = null, $page = 1, $perPage = 20, $customerId = null, $typeId = null)
     {
+        [$page, $perPage] = $this->normalizePagination($page, $perPage);
+        $offset = ($page - 1) * $perPage;
+        $prefix = DB::getTablePrefix();
+        $bAlias = $prefix . 'b';
+        $cAlias = $prefix . 'c';
+        $tAlias = $prefix . 't';
+
         $query = DB::table('ns_customer_container_balances as b')
             ->leftJoin('nexopos_users as c', 'c.id', '=', 'b.customer_id')
             ->leftJoin('ns_container_types as t', 't.id', '=', 'b.container_type_id')
+            ->where('b.balance', '!=', 0)
             ->select(
-                DB::raw('COALESCE(c.first_name, "Unknown") as customer'),
-                DB::raw('COALESCE(t.name, "Unknown") as container'),
+                DB::raw("COALESCE({$cAlias}.first_name, 'Unknown') as customer"),
+                DB::raw("COALESCE({$tAlias}.name, 'Unknown') as container"),
                 'b.balance',
                 'b.updated_at'
-            )
-            ->where('b.balance', '!=', 0)
-            ->orderByDesc('b.balance');
+            );
 
-        // Apply filters
         if ($from) {
             $query->whereDate('b.updated_at', '>=', $from);
         }
@@ -382,20 +429,25 @@ class ContainerLedgerService
             $query->whereDate('b.updated_at', '<=', $to);
         }
         if ($customerId) {
-            $query->where('b.customer_id', $customerId);
+            $query->where('b.customer_id', (int) $customerId);
         }
         if ($typeId) {
-            $query->where('b.container_type_id', $typeId);
+            $query->where('b.container_type_id', (int) $typeId);
         }
 
-        $paginated = $query->paginate($perPage, ['*'], 'page', $page);
+        $total = (clone $query)->count();
+        $data = $query->orderByDesc('b.balance')
+            ->offset($offset)
+            ->limit($perPage)
+            ->get()
+            ->all();
 
         return [
-            'data' => $paginated->items(),
-            'total' => $paginated->total(),
-            'per_page' => $paginated->perPage(),
-            'current_page' => $paginated->currentPage(),
-            'last_page' => $paginated->lastPage(),
+            'data'         => $data,
+            'total'        => (int) $total,
+            'per_page'     => $perPage,
+            'current_page' => $page,
+            'last_page'    => (int) ceil($total / $perPage),
         ];
     }
 
@@ -404,18 +456,7 @@ class ContainerLedgerService
      */
     public function updateCustomerBalance(int $customerId, int $containerTypeId, int $out = 0, int $in = 0, int $charged = 0): CustomerContainerBalance
     {
-        $balance = CustomerContainerBalance::firstOrCreate(
-            [
-                'customer_id' => $customerId,
-                'container_type_id' => $containerTypeId,
-            ],
-            [
-                'balance' => 0,
-                'total_out' => 0,
-                'total_in' => 0,
-                'total_charged' => 0,
-            ]
-        );
+        $balance = $this->getOrCreateBalanceForUpdate($customerId, $containerTypeId);
 
         $balance->update([
             'balance' => max(0, $balance->balance + $out - $in - $charged),
@@ -433,13 +474,73 @@ class ContainerLedgerService
      */
     protected function adjustInventoryQuantity(int $containerTypeId, int $adjustment): void
     {
-        $inventory = ContainerInventory::firstOrCreate(
-            ['container_type_id' => $containerTypeId],
-            ['quantity_on_hand' => 0, 'quantity_reserved' => 0]
-        );
+        $inventory = $this->getOrCreateInventoryForUpdate($containerTypeId);
 
         $inventory->update([
             'quantity_on_hand' => $inventory->quantity_on_hand + $adjustment,
         ]);
+    }
+
+    protected function normalizePagination($page, $perPage): array
+    {
+        $page = max(1, (int) $page);
+        $perPage = max(1, min(100, (int) $perPage));
+
+        return [$page, $perPage];
+    }
+
+    protected function getOrCreateBalanceForUpdate(int $customerId, int $containerTypeId): CustomerContainerBalance
+    {
+        $balance = CustomerContainerBalance::where('customer_id', $customerId)
+            ->where('container_type_id', $containerTypeId)
+            ->lockForUpdate()
+            ->first();
+
+        if ($balance instanceof CustomerContainerBalance) {
+            return $balance;
+        }
+
+        try {
+            CustomerContainerBalance::create([
+                'customer_id' => $customerId,
+                'container_type_id' => $containerTypeId,
+                'balance' => 0,
+                'total_out' => 0,
+                'total_in' => 0,
+                'total_charged' => 0,
+            ]);
+        } catch (QueryException $e) {
+            // Another concurrent transaction may have created the row first.
+        }
+
+        return CustomerContainerBalance::where('customer_id', $customerId)
+            ->where('container_type_id', $containerTypeId)
+            ->lockForUpdate()
+            ->firstOrFail();
+    }
+
+    protected function getOrCreateInventoryForUpdate(int $containerTypeId): ContainerInventory
+    {
+        $inventory = ContainerInventory::where('container_type_id', $containerTypeId)
+            ->lockForUpdate()
+            ->first();
+
+        if ($inventory instanceof ContainerInventory) {
+            return $inventory;
+        }
+
+        try {
+            ContainerInventory::create([
+                'container_type_id' => $containerTypeId,
+                'quantity_on_hand' => 0,
+                'quantity_reserved' => 0,
+            ]);
+        } catch (QueryException $e) {
+            // Another concurrent transaction may have created the row first.
+        }
+
+        return ContainerInventory::where('container_type_id', $containerTypeId)
+            ->lockForUpdate()
+            ->firstOrFail();
     }
 }

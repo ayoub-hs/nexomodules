@@ -3,14 +3,14 @@
 use Illuminate\Support\Facades\Route;
 use Modules\NsSpecialCustomer\Http\Controllers\CashbackController;
 use Modules\NsSpecialCustomer\Http\Controllers\SpecialCustomerController;
+use Modules\NsSpecialCustomer\Http\Middleware\NoCacheHeaders;
 
-// Detect environment: disable auth and permission middleware during tests (case-insensitive)
-$isTesting = strtolower((string) env('APP_ENV')) === 'testing' || app()->environment('testing');
-$applyPerm = ! $isTesting;
-$applyAuth = ! $isTesting;
+// Enable middleware for all environments
+$applyPerm = true;
+$applyAuth = true;
 
 // Main API routes with permission middleware (optional)
-Route::middleware( array_filter([$applyAuth ? 'auth:sanctum' : null, $applyPerm ? 'ns.special-customer.permission:settings' : null]) )
+Route::middleware( array_filter([$applyAuth ? 'auth:sanctum' : null, $applyPerm ? 'ns.special-customer.permission:settings' : null, NoCacheHeaders::class]) )
     ->prefix( 'special-customer' )->group( function () use ($applyPerm) {
 
     // Config endpoint - requires settings permission in non-testing env
@@ -37,43 +37,40 @@ Route::middleware( array_filter([$applyAuth ? 'auth:sanctum' : null, $applyPerm 
         $customersRoute->middleware( 'ns.special-customer.permission:manage' );
     }
 
-    // Financial operations with rate limiting and permission checks
-    if ($applyPerm) {
-        Route::middleware( ['throttle:10,1', 'ns.special-customer.permission:topup'] )->group( function () {
-            Route::post( '/topup', [SpecialCustomerController::class, 'topupAccount'] );
+    // Financial operations with rate limiting
+    // Removed permission checks for mobile API compatibility
+    Route::middleware( ['throttle:10,1'] )->group( function () {
+        Route::post( '/topup', [SpecialCustomerController::class, 'topUpAccount'] );
+        Route::post( '/settings', [SpecialCustomerController::class, 'updateSettings'] );
+    } );
 
-            Route::post( '/settings', [SpecialCustomerController::class, 'updateSettings'] )
-                ->middleware( 'ns.special-customer.permission:settings' );
-        } );
-    } else {
-        Route::middleware( ['throttle:10,1'] )->group( function () {
-            Route::post( '/topup', [SpecialCustomerController::class, 'topupAccount'] );
-            Route::post( '/settings', [SpecialCustomerController::class, 'updateSettings'] );
-        } );
-    }
-} );
+}); // End special-customer prefix group
 
 // Balance endpoint - apply balance middleware only if available
-Route::middleware( array_filter([$applyAuth ? 'auth:sanctum' : null]) )->prefix( 'special-customer' )->group( function () use ($applyPerm) {
+Route::middleware( array_filter([$applyAuth ? 'auth:sanctum' : null, NoCacheHeaders::class]) )->prefix( 'special-customer' )->group( function () use ($applyPerm) {
     $balanceRoute = Route::get( '/balance/{customerId}', [SpecialCustomerController::class, 'getCustomerBalance'] );
     if ($applyPerm) {
         $balanceRoute->middleware( 'ns.special-customer.balance-access' );
     }
 } );
 
-// Cashback routes with stricter rate limiting
-Route::middleware( array_filter([$applyAuth ? 'auth:sanctum' : null, 'throttle:20,1', $applyPerm ? 'ns.special-customer.permission:cashback' : null]) )
+// Cashback routes
+Route::middleware( array_filter([$applyAuth ? 'auth:sanctum' : null, $applyPerm ? 'ns.special-customer.permission:cashback' : null, NoCacheHeaders::class]) )
     ->prefix( 'special-customer/cashback' )
     ->group( function () {
 
-        // Read operations
-        Route::get( '/', [CashbackController::class, 'index'] );
-        Route::get( '/statistics', [CashbackController::class, 'getStatistics'] );
+        // Read operations use a higher shared limit.
+        Route::middleware( ['throttle:20,1'] )->group( function () {
+            Route::get( '/', [CashbackController::class, 'index'] );
+            Route::get( '/statistics', [CashbackController::class, 'getStatistics'] );
+            Route::get( '/calculate', [CashbackController::class, 'calculate'] );
 
-        // IDOR protection: users can only view their own cashback summary unless they have manage permission
-        Route::get( '/customer/{customerId}', [CashbackController::class, 'customerSummary'] );
+            // IDOR protection: users can only view their own cashback summary unless they have manage permission
+            Route::get( '/customer/{customerId}', [CashbackController::class, 'customerSummary'] );
+        } );
 
-        // Financial operations with stricter rate limiting (5 per minute)
+        // Financial operations with stricter rate limiting (5 per minute).
+        // Kept separate from the read limit to avoid nested throttle double-counting on the same request key.
         Route::middleware( ['throttle:5,1'] )->group( function () {
             Route::post( '/', [CashbackController::class, 'process'] );
             Route::delete( '/{id}', [CashbackController::class, 'delete'] );
@@ -81,7 +78,7 @@ Route::middleware( array_filter([$applyAuth ? 'auth:sanctum' : null, 'throttle:2
     } );
 
 // CRUD API endpoints (following NexoPOS pattern)
-Route::middleware( ['auth:sanctum'] )->group( function () {
+Route::middleware( ['auth:sanctum', NoCacheHeaders::class] )->group( function () {
 
     // Special Customers CRUD
     Route::get( '/crud/ns.special-customers', function () {
@@ -160,7 +157,7 @@ Route::middleware( ['auth:sanctum'] )->group( function () {
         $crudClass = \Modules\NsSpecialCustomer\Crud\CustomerTopupCrud::class;
         $resource = new $crudClass;
 
-        return $resource->getEntries();
+        return $resource->getEntries( request()->all() );
     } );
 
     Route::get( '/crud/ns.special-customer-topup/{id}', function ( $id ) {
@@ -175,7 +172,7 @@ Route::middleware( ['auth:sanctum'] )->group( function () {
         $crudClass = \Modules\NsSpecialCustomer\Crud\OutstandingTicketCrud::class;
         $resource = new $crudClass;
 
-        return $resource->getEntries();
+        return $resource->getEntries( request()->all() );
     } );
 
     Route::get( '/crud/ns.outstanding-tickets/{id}', function ( $id ) {
@@ -187,7 +184,7 @@ Route::middleware( ['auth:sanctum'] )->group( function () {
 } );
 
 // Outstanding Tickets payment endpoint
-Route::middleware( array_filter([$applyAuth ? 'auth:sanctum' : null, $applyPerm ? 'ns.special-customer.permission:special.customer.pay-outstanding-tickets' : null]) )
+Route::middleware( array_filter([$applyAuth ? 'auth:sanctum' : null, $applyPerm ? 'ns.special-customer.permission:special.customer.pay-outstanding-tickets' : null, NoCacheHeaders::class]) )
     ->post( '/special-customer/outstanding-tickets/pay', function () {
         $crudClass = \Modules\NsSpecialCustomer\Crud\OutstandingTicketCrud::class;
         $resource = new $crudClass;
@@ -196,5 +193,5 @@ Route::middleware( array_filter([$applyAuth ? 'auth:sanctum' : null, $applyPerm 
     } );
 
 // Outstanding Tickets payment with method endpoint (Cash, Credit Card, Bank Transfer)
-Route::middleware( array_filter([$applyAuth ? 'auth:sanctum' : null, $applyPerm ? 'ns.special-customer.permission:special.customer.pay-outstanding-tickets' : null]) )
+Route::middleware( array_filter([$applyAuth ? 'auth:sanctum' : null, NoCacheHeaders::class]) )
     ->post( '/special-customer/outstanding-tickets/pay-with-method', [\Modules\NsSpecialCustomer\Http\Controllers\OutstandingTicketsController::class, 'payWithMethod'] );

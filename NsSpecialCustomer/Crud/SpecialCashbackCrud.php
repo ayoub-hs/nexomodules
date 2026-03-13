@@ -2,17 +2,21 @@
 
 namespace Modules\NsSpecialCustomer\Crud;
 
+use App\Casts\DateCast;
 use App\Classes\CrudForm;
 use App\Classes\FormInput;
 use App\Models\Customer;
 use App\Services\CrudEntry;
 use App\Services\CrudService;
+use Modules\NsSpecialCustomer\Crud\Concerns\AppliesCrudEntryCasts;
 use Modules\NsSpecialCustomer\Models\SpecialCashbackHistory;
 use Modules\NsSpecialCustomer\Services\SpecialCustomerService;
 use Illuminate\Http\Request;
 
 class SpecialCashbackCrud extends CrudService
 {
+    use AppliesCrudEntryCasts;
+
     const IDENTIFIER = 'ns.special-customer-cashback';
     const AUTOLOAD = true;
     
@@ -26,6 +30,8 @@ class SpecialCashbackCrud extends CrudService
     public function __construct()
     {
         parent::__construct();
+
+        $this->casts['processed_at'] = DateCast::class;
         
         $this->mainRoute = 'dashboard/special-customer/cashback';
         $this->permissions = [
@@ -50,7 +56,8 @@ class SpecialCashbackCrud extends CrudService
             'customer_name' => [
                 'label' => __('Customer'),
                 'width' => '200px',
-                'filter' => 'like'
+                'filter' => 'like',
+                '$sort' => false
             ],
             'year' => [
                 'label' => __('Year'),
@@ -82,7 +89,8 @@ class SpecialCashbackCrud extends CrudService
             ],
             'author_name' => [
                 'label' => __('Processed By'),
-                'width' => '150px'
+                'width' => '150px',
+                '$sort' => false
             ]
         ];
     }
@@ -113,15 +121,39 @@ class SpecialCashbackCrud extends CrudService
             }
         }
 
-        // Apply ordering
-        $query->orderBy(
-            $config['order_by'] ?? 'created_at',
-            $config['direction'] ?? 'desc'
-        );
+        // Apply ordering using the same query params emitted by <ns-crud>.
+        $requestedSortColumn = $config['order_by']
+            ?? request()->query('active')
+            ?? 'created_at';
+        $requestedDirection = strtolower((string) (
+            $config['direction']
+            ?? request()->query('direction')
+            ?? 'desc'
+        ));
+
+        $sortableColumns = [
+            'id',
+            'year',
+            'total_purchases',
+            'cashback_percentage',
+            'cashback_amount',
+            'status',
+            'processed_at',
+            'created_at',
+        ];
+
+        $sortColumn = in_array($requestedSortColumn, $sortableColumns, true)
+            ? $requestedSortColumn
+            : 'created_at';
+        $sortDirection = in_array($requestedDirection, ['asc', 'desc'], true)
+            ? $requestedDirection
+            : 'desc';
+
+        $query->orderBy($sortColumn, $sortDirection);
 
         // Handle pagination
-        $perPage = $config['per_page'] ?? 25;
-        $page = $config['page'] ?? 1;
+        $perPage = max(0, (int) ($config['per_page'] ?? request()->query('per_page', 25)));
+        $page = max(1, (int) ($config['page'] ?? request()->query('page', 1)));
 
         if ($perPage > 0) {
             $entries = $query->paginate($perPage, ['*'], 'page', $page);
@@ -164,7 +196,7 @@ class SpecialCashbackCrud extends CrudService
             // Add reversal author name
             $entryArray['reversal_author_name'] = $entry->reversalAuthorUser ? $entry->reversalAuthorUser->username : null;
             
-            $crudEntry = new CrudEntry($entryArray);
+            $crudEntry = $this->applyCrudEntryCasts(new CrudEntry($entryArray));
             
             // Format currency fields
             if (isset($crudEntry->cashback_amount)) {
@@ -181,8 +213,9 @@ class SpecialCashbackCrud extends CrudService
         // Update pagination info
         $result['total'] = $entries instanceof \Illuminate\Pagination\LengthAwarePaginator ? $entries->total() : count($entries);
         $result['per_page'] = $perPage;
-        $result['current_page'] = $page;
+        $result['current_page'] = $entries instanceof \Illuminate\Pagination\LengthAwarePaginator ? $entries->currentPage() : $page;
         $result['last_page'] = $entries instanceof \Illuminate\Pagination\LengthAwarePaginator ? $entries->lastPage() : 1;
+        $result['first_page'] = 1;
 
         return $result;
     }
@@ -192,14 +225,14 @@ class SpecialCashbackCrud extends CrudService
      */
     public function getForm( $entry = null )
     {
+        $specialCustomerService = app(SpecialCustomerService::class);
+        $defaultCashbackPercentage = $specialCustomerService->getCashbackPercentage();
+
         return CrudForm::form(
-            main: FormInput::select(
-                name: 'customer_id',
-                label: __( 'Customer' ),
-                value: $entry->customer_id ?? '',
-                validation: 'required|exists:nexopos_users,id',
-                description: __( 'Select the special customer for cashback.' ),
-                options: $this->getSpecialCustomersOptions()
+            // Placeholder main field to hide the top input; ns-crud-form currently assumes "main" exists.
+            main: FormInput::hidden(
+                name: '',
+                value: ''
             ),
             tabs: CrudForm::tabs(
                 CrudForm::tab(
@@ -212,6 +245,14 @@ class SpecialCashbackCrud extends CrudService
                             value: $entry->year ?? date( 'Y' ),
                             validation: 'required|integer|min:2000|max:' . ( date( 'Y' ) + 1 ),
                             description: __( 'Year for cashback calculation.' )
+                        ),
+                        FormInput::searchSelect(
+                            label: __( 'Customer' ),
+                            name: 'customer_id',
+                            value: $entry->customer_id ?? '',
+                            options: $this->getSpecialCustomersOptions(),
+                            validation: 'required|exists:nexopos_users,id',
+                            description: __( 'Select the special customer for cashback.' )
                         ),
                         FormInput::number(
                             name: 'total_purchases',
@@ -230,7 +271,7 @@ class SpecialCashbackCrud extends CrudService
                         FormInput::number(
                             name: 'cashback_percentage',
                             label: __( 'Cashback Percentage' ),
-                            value: $entry->cashback_percentage ?? '',
+                            value: $entry->cashback_percentage ?? $defaultCashbackPercentage,
                             validation: 'required|numeric|min:0|max:100',
                             description: __( 'Cashback percentage to apply.' )
                         ),
@@ -411,8 +452,9 @@ class SpecialCashbackCrud extends CrudService
         return [
             'list' => ns()->url('dashboard/special-customer/cashback'),
             'create' => ns()->url('dashboard/special-customer/cashback/create'),
-            'edit' => ns()->url('dashboard/special-customer/cashback/edit/'),
+            'edit' => ns()->url('dashboard/special-customer/cashback/edit/{id}'),
             'post' => ns()->url('api/crud/' . 'ns.special-customer-cashback'),
+            'put' => ns()->url('api/crud/' . 'ns.special-customer-cashback/{id}'),
         ];
     }
 
@@ -511,7 +553,7 @@ class SpecialCashbackCrud extends CrudService
                 'label' => __('Edit'),
                 'namespace' => 'edit',
                 'type' => 'default',
-                'url' => ns()->url('/dashboard/special-customer/cashback/' . $entry->id . '/edit')
+                'url' => ns()->url('/dashboard/special-customer/cashback/edit/' . $entry->id)
             ];
         }
 

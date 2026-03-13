@@ -12,9 +12,15 @@ use Modules\NsContainerManagement\Crud\ReceiveContainerCrud;
 use Modules\NsContainerManagement\Crud\CustomerBalanceCrud;
 use Modules\NsContainerManagement\Crud\ContainerAdjustmentCrud;
 use Modules\NsContainerManagement\Models\ContainerType;
+use Modules\NsContainerManagement\Services\ContainerLedgerService;
 
 class DashboardController extends BaseDashboardController
 {
+    public function __construct(
+        protected ContainerLedgerService $ledgerService
+    ) {
+    }
+
     public function containerTypes(): mixed
     {
         return ContainerTypeCrud::table();
@@ -86,65 +92,45 @@ class DashboardController extends BaseDashboardController
     public function processCharge(Request $request): JsonResponse
     {
         try {
-            \Log::info('Processing charge request', [
-                'data' => $request->all(),
-                'user' => auth()->id() ?? 0
-            ]);
-
             $validated = $request->validate([
-                'customer_id' => 'required|exists:nexopos_users,id',
+                'customer_id'       => 'required|exists:nexopos_users,id',
                 'container_type_id' => 'required|exists:ns_container_types,id',
-                'quantity' => 'required|integer|min:1',
-                'unit_price' => 'required|numeric|min:0',
-                'total_amount' => 'required|numeric|min:0',
-                'charge_type' => 'required|string',
-                'notes' => 'nullable|string|max:500'
+                'quantity'          => 'required|integer|min:1',
+                'unit_price'        => 'required|numeric|min:0',
+                'total_amount'      => 'required|numeric|min:0',
+                'charge_type'       => 'required|string',
+                'notes'             => 'nullable|string|max:500',
             ]);
 
-            \Log::info('Validation passed', ['validated' => $validated]);
-
-            // Create a charge movement record
-            $movement = new \Modules\NsContainerManagement\Models\ContainerMovement([
-                'customer_id' => $validated['customer_id'],
-                'container_type_id' => $validated['container_type_id'],
-                'quantity' => $validated['quantity'],
-                'direction' => 'charge',
-                'source_type' => 'charge', // Always use 'charge' for container charges
-                'total_deposit_value' => $validated['total_amount'],
-                'note' => $validated['notes'] ?? null,
-                'author' => auth()->id() ?? 0 // Add current user as author
-            ]);
-
-            $movement->save();
-            \Log::info('Movement created', ['movement_id' => $movement->id]);
-
-            // Note: Customer balance is automatically updated by ContainerMovement::booted()
-            // No need to manually update balance here
+            $result = $this->ledgerService->chargeCustomerForContainers(
+                (int) $validated['customer_id'],
+                (int) $validated['container_type_id'],
+                (int) $validated['quantity'],
+                $validated['notes'] ?? null
+            );
+            $movement = $result['movement'];
 
             return response()->json([
-                'success' => true,
-                'message' => 'Charge processed successfully',
+                'success'     => true,
+                'message'     => __('Charge processed successfully'),
                 'movement_id' => $movement->id,
-                'note' => 'Balance automatically updated by movement system'
             ]);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
-            \Log::error('Validation error', ['errors' => $e->errors()]);
             return response()->json([
                 'success' => false,
-                'message' => 'Validation failed: ' . implode(', ', $e->errors()->all()),
-                'errors' => $e->errors()
+                'message' => __('Validation failed'),
+                'errors'  => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
-            \Log::error('Charge processing error', [
+            \Log::error('Container charge processing error', [
                 'message' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
+                'file'    => $e->getFile(),
+                'line'    => $e->getLine(),
             ]);
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage()
+                'message' => $e->getMessage(),
             ], 500);
         }
     }

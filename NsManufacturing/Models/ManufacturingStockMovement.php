@@ -26,7 +26,6 @@ class ManufacturingStockMovement extends NsModel
 
     const TYPE_CONSUMPTION = 'consumption';
     const TYPE_PRODUCTION = 'production';
-    const TYPE_WASTE = 'waste';
 
     public function order()
     {

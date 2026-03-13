@@ -2,6 +2,7 @@
 
 namespace Modules\NsSpecialCustomer\Crud;
 
+use App\Casts\DateCast;
 use App\Classes\CrudForm;
 use App\Classes\FormInput;
 use App\Models\Customer;
@@ -10,6 +11,7 @@ use App\Services\CrudService;
 use App\Services\Helper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Modules\NsSpecialCustomer\Crud\Concerns\AppliesCrudEntryCasts;
 use Modules\NsSpecialCustomer\Models\SpecialCashbackHistory;
 use Modules\NsSpecialCustomer\Services\SpecialCustomerService;
 use Modules\NsSpecialCustomer\Services\WalletService;
@@ -22,6 +24,8 @@ use Modules\NsSpecialCustomer\Services\WalletService;
  */
 class CustomerTopupCrud extends CrudService
 {
+    use AppliesCrudEntryCasts;
+
     const IDENTIFIER = 'ns.special-customer-topup';
     const AUTOLOAD = true;
     
@@ -40,6 +44,7 @@ class CustomerTopupCrud extends CrudService
         'next_amount',
         'operation',
         'description',
+        'received_date',
         'reference',
         'author',
     ];
@@ -50,6 +55,8 @@ class CustomerTopupCrud extends CrudService
     public function __construct()
     {
         parent::__construct();
+
+        $this->casts['received_date'] = DateCast::class;
         
         $this->mainRoute = 'dashboard/special-customer/topup';
         $this->permissions = [
@@ -74,7 +81,8 @@ class CustomerTopupCrud extends CrudService
             'customer_name' => [
                 'label' => __('Customer'),
                 'width' => '200px',
-                'filter' => 'like'
+                'filter' => 'like',
+                '$sort' => false
             ],
             'amount' => [
                 'label' => __('Amount'),
@@ -90,16 +98,17 @@ class CustomerTopupCrud extends CrudService
                 'width' => '120px',
                 '$direction' => 'desc'
             ],
-            'description' => [
-                'label' => __('Description'),
-                'width' => '200px'
+            'received_date' => [
+                'label' => __('Received Date'),
+                'width' => '140px'
             ],
             'author_name' => [
                 'label' => __('Processed By'),
-                'width' => '150px'
+                'width' => '150px',
+                '$sort' => false
             ],
             'created_at' => [
-                'label' => __('Date'),
+                'label' => __('Processed At'),
                 'width' => '150px'
             ]
         ];
@@ -130,15 +139,37 @@ class CustomerTopupCrud extends CrudService
             }
         }
 
-        // Apply ordering
-        $query->orderBy(
-            $config['order_by'] ?? 'created_at',
-            $config['direction'] ?? 'desc'
-        );
+        // Apply ordering using the same query params emitted by <ns-crud>.
+        $requestedSortColumn = $config['order_by']
+            ?? request()->query('active')
+            ?? 'created_at';
+        $requestedDirection = strtolower((string) (
+            $config['direction']
+            ?? request()->query('direction')
+            ?? 'desc'
+        ));
+
+        $sortableColumns = [
+            'id',
+            'amount',
+            'previous_amount',
+            'next_amount',
+            'received_date',
+            'created_at',
+        ];
+
+        $sortColumn = in_array($requestedSortColumn, $sortableColumns, true)
+            ? $requestedSortColumn
+            : 'created_at';
+        $sortDirection = in_array($requestedDirection, ['asc', 'desc'], true)
+            ? $requestedDirection
+            : 'desc';
+
+        $query->orderBy($sortColumn, $sortDirection);
 
         // Handle pagination
-        $perPage = $config['per_page'] ?? 25;
-        $page = $config['page'] ?? 1;
+        $perPage = max(0, (int) ($config['per_page'] ?? request()->query('per_page', 25)));
+        $page = max(1, (int) ($config['page'] ?? request()->query('page', 1)));
 
         if ($perPage > 0) {
             $entries = $query->paginate($perPage, ['*'], 'page', $page);
@@ -184,6 +215,10 @@ class CustomerTopupCrud extends CrudService
                 $entryArray['author_name'] = __('System');
             }
             
+            if (empty($entryArray['received_date']) && !empty($entryArray['created_at'])) {
+                $entryArray['received_date'] = substr((string) $entryArray['created_at'], 0, 10);
+            }
+
             // Format currency fields
             if (isset($entryArray['amount'])) {
                 $entryArray['formatted_amount'] = ns()->currency->define($entryArray['amount']);
@@ -197,7 +232,7 @@ class CustomerTopupCrud extends CrudService
                 $entryArray['formatted_new_balance'] = ns()->currency->define($entryArray['new_balance']);
             }
             
-            $crudEntry = new CrudEntry($entryArray);
+            $crudEntry = $this->applyCrudEntryCasts(new CrudEntry($entryArray));
             
             return $crudEntry;
         })->filter()->values()->toArray();
@@ -205,31 +240,37 @@ class CustomerTopupCrud extends CrudService
         // Update pagination info
         $result['total'] = $entries instanceof \Illuminate\Pagination\LengthAwarePaginator ? $entries->total() : count($entries);
         $result['per_page'] = $perPage;
-        $result['current_page'] = $page;
+        $result['current_page'] = $entries instanceof \Illuminate\Pagination\LengthAwarePaginator ? $entries->currentPage() : $page;
         $result['last_page'] = $entries instanceof \Illuminate\Pagination\LengthAwarePaginator ? $entries->lastPage() : 1;
+        $result['first_page'] = 1;
 
         return $result;
     }
 
     /**
      * Get form configuration
-     * Amount is the main field, customer select is next to description in the tab
+     * Amount is the main field, customer select and received date are in the details tab
      */
     public function getForm( $entry = null )
     {
         return CrudForm::form(
-            main: FormInput::number(
-                name: 'amount',
-                label: __( 'Amount' ),
-                value: $entry->amount ?? '',
-                validation: 'required|numeric|min:0.01',
-                description: __( 'Enter the top-up amount.' )
+            // Placeholder main field to hide the top input; ns-crud-form currently assumes "main" exists.
+            main: FormInput::hidden(
+                name: '',
+                value: ''
             ),
             tabs: CrudForm::tabs(
                 CrudForm::tab(
                     label: __( 'Top-up Details' ),
                     identifier: 'details',
                     fields: CrudForm::fields(
+                        FormInput::number(
+                            name: 'amount',
+                            label: __( 'Amount' ),
+                            value: $entry->amount ?? '',
+                            validation: 'required|numeric|min:0.01',
+                            description: __( 'Enter the top-up amount.' )
+                        ),
                         FormInput::searchSelect(
                             label: __( 'Customer' ),
                             name: 'customer_id',
@@ -238,11 +279,12 @@ class CustomerTopupCrud extends CrudService
                             validation: 'required|numeric|exists:nexopos_users,id',
                             description: __( 'Select the special customer to top-up.' )
                         ),
-                        FormInput::textarea(
-                            name: 'description',
-                            label: __( 'Description' ),
-                            value: $entry->description ?? '',
-                            description: __( 'Optional description for this top-up.' )
+                        FormInput::date(
+                            label: __( 'Received Date' ),
+                            name: 'received_date',
+                            value: $entry->received_date ?? now()->toDateString(),
+                            validation: 'required|date',
+                            description: __( 'Date the money was received (can differ from processing date).' )
                         )
                     )
                 )
@@ -261,7 +303,7 @@ class CustomerTopupCrud extends CrudService
         $validated = $request->validate([
             'customer_id' => 'required|integer|exists:nexopos_users,id',
             'amount' => 'required|numeric|min:0.01',
-            'description' => 'nullable|string|max:255'
+            'received_date' => 'required|date'
         ]);
 
         $walletService = app(\Modules\NsSpecialCustomer\Services\WalletService::class);
@@ -270,8 +312,9 @@ class CustomerTopupCrud extends CrudService
             $result = $walletService->processTopup(
                 $validated['customer_id'],
                 $validated['amount'],
-                $validated['description'] ?? 'Special customer top-up',
-                'ns_special_topup'
+                __('Special customer top-up'),
+                'ns_special_topup',
+                $validated['received_date']
             );
 
             if ($result['success']) {
@@ -492,7 +535,8 @@ class CustomerTopupCrud extends CrudService
         return [
             'customer_id' => $customerId,
             'amount' => $amount,
-            'description' => $inputs['description'] ?? null,
+            'description' => __('Special customer top-up'),
+            'received_date' => $inputs['received_date'] ?? now()->toDateString(),
             'operation' => \App\Models\CustomerAccountHistory::OPERATION_ADD,
             'reference' => 'ns_special_topup',
             'previous_amount' => $previousBalance,

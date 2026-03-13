@@ -9,12 +9,16 @@ use App\Classes\FormInput;
 use App\Models\Customer;
 use App\Models\CustomerGroup;
 use App\Models\Order;
+use Modules\NsSpecialCustomer\Crud\Concerns\AppliesCrudEntryCasts;
 use Modules\NsSpecialCustomer\Services\SpecialCustomerService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class SpecialCustomerCrud extends CrudService
 {
+    use AppliesCrudEntryCasts;
+
     const IDENTIFIER = 'ns.special-customers';
     const AUTOLOAD = true;
     
@@ -53,7 +57,8 @@ class SpecialCustomerCrud extends CrudService
                 'label' => __('Customer'),
                 'width' => '200px',
                 'filter' => 'like',
-                'component' => 'ns-crud-column-customer-name'
+                'component' => 'ns-crud-column-customer-name',
+                '$sort' => false
             ],
             'email' => [
                 'label' => __('Email'),
@@ -63,7 +68,8 @@ class SpecialCustomerCrud extends CrudService
             'group_name' => [
                 'label' => __('Group'),
                 'width' => '100px',
-                'filter' => 'exact'
+                'filter' => 'exact',
+                '$sort' => false
             ],
             'account_amount' => [
                 'label' => __('Balance'),
@@ -73,7 +79,8 @@ class SpecialCustomerCrud extends CrudService
             'total_unpaid' => [
                 'label' => __('Total Unpaid'),
                 'width' => '130px',
-                '$direction' => 'desc'
+                '$direction' => 'desc',
+                '$sort' => false
             ],
             'created_at' => [
                 'label' => __('Created At'),
@@ -110,15 +117,35 @@ class SpecialCustomerCrud extends CrudService
             }
         }
 
-        // Apply ordering
-        $query->orderBy(
-            $config['order_by'] ?? 'created_at',
-            $config['direction'] ?? 'desc'
-        );
+        // Apply ordering using the same query params emitted by <ns-crud>.
+        $requestedSortColumn = $config['order_by']
+            ?? request()->query('active')
+            ?? 'created_at';
+        $requestedDirection = strtolower((string) (
+            $config['direction']
+            ?? request()->query('direction')
+            ?? 'desc'
+        ));
+
+        $sortableColumns = [
+            'id',
+            'email',
+            'account_amount',
+            'created_at',
+        ];
+
+        $sortColumn = in_array($requestedSortColumn, $sortableColumns, true)
+            ? $requestedSortColumn
+            : 'created_at';
+        $sortDirection = in_array($requestedDirection, ['asc', 'desc'], true)
+            ? $requestedDirection
+            : 'desc';
+
+        $query->orderBy($sortColumn, $sortDirection);
 
         // Handle pagination
-        $perPage = $config['per_page'] ?? 25;
-        $page = $config['page'] ?? 1;
+        $perPage = max(0, (int) ($config['per_page'] ?? request()->query('per_page', 25)));
+        $page = max(1, (int) ($config['page'] ?? request()->query('page', 1)));
 
         if ($perPage > 0) {
             $entries = $query->paginate($perPage, ['*'], 'page', $page);
@@ -159,7 +186,7 @@ class SpecialCustomerCrud extends CrudService
             // Create formatted customer name
             $entryArray['name'] = $entry->first_name . ' ' . $entry->last_name;
             
-            $crudEntry = new CrudEntry($entryArray);
+            $crudEntry = $this->applyCrudEntryCasts(new CrudEntry($entryArray));
             
             // Add special customer status
             $crudEntry->is_special = true;
@@ -186,8 +213,9 @@ class SpecialCustomerCrud extends CrudService
         // Update pagination info
         $result['total'] = $entries instanceof \Illuminate\Pagination\LengthAwarePaginator ? $entries->total() : count($entries);
         $result['per_page'] = $perPage;
-        $result['current_page'] = $page;
+        $result['current_page'] = $entries instanceof \Illuminate\Pagination\LengthAwarePaginator ? $entries->currentPage() : $page;
         $result['last_page'] = $entries instanceof \Illuminate\Pagination\LengthAwarePaginator ? $entries->lastPage() : 1;
+        $result['first_page'] = 1;
 
         return $result;
     }
@@ -368,13 +396,44 @@ class SpecialCustomerCrud extends CrudService
             return [];
         }
 
+        if (! Schema::hasTable('nexopos_orders') || ! Schema::hasTable('nexopos_orders_payments')) {
+            return [];
+        }
+
+        $orderTotalColumn = collect(['total', 'total_with_tax', 'subtotal'])
+            ->first(fn (string $column) => Schema::hasColumn('nexopos_orders', $column));
+
+        if (! is_string($orderTotalColumn)) {
+            return [];
+        }
+
         // Query orders that are unpaid or partially paid
-        // Payment statuses: 'unpaid', 'partially_paid', 'hold'
-        $unpaidOrders = DB::table('nexopos_orders')
-            ->select('customer_id', DB::raw('SUM(total - tendered) as unpaid_amount'))
-            ->whereIn('customer_id', $customerIds)
-            ->whereIn('payment_status', ['unpaid', 'partially_paid', 'hold'])
-            ->groupBy('customer_id')
+        // Calculate unpaid from actual payments table, not from tendered field
+        // Unpaid = total - SUM(payments.value)
+        $paymentsSubquery = DB::table('nexopos_orders_payments')
+            ->select('order_id', DB::raw('SUM(value) as payment_sum'))
+            ->groupBy('order_id');
+
+        $prefix = DB::getTablePrefix();
+        $ordersAlias = $prefix . 'orders';
+        $paymentsAlias = $prefix . 'payments';
+
+        $unpaidOrders = DB::table('nexopos_orders as orders')
+            ->select('orders.customer_id', DB::raw(
+                sprintf(
+                    'SUM(%s.%s - COALESCE(%s.payment_sum, 0)) as unpaid_amount',
+                    $ordersAlias,
+                    $orderTotalColumn
+                    ,
+                    $paymentsAlias
+                )
+            ))
+            ->leftJoinSub($paymentsSubquery, 'payments', function ($join) {
+                $join->on('orders.id', '=', 'payments.order_id');
+            })
+            ->whereIn('orders.customer_id', $customerIds)
+            ->whereIn('orders.payment_status', ['unpaid', 'partially_paid', 'hold'])
+            ->groupBy('orders.customer_id')
             ->get();
 
         $result = [];

@@ -3,10 +3,17 @@
 namespace Modules\NsManufacturing\Providers;
 
 use Illuminate\Support\Facades\View;
+use Illuminate\Support\Facades\Event;
+use App\Services\Helper;
+use App\Events\ProductUnitQuantityAfterCreatedEvent;
+use App\Events\ProductUnitQuantityAfterUpdatedEvent;
+use App\Models\ProductUnitQuantity;
 use Illuminate\Support\ServiceProvider;
 use Modules\NsManufacturing\Crud\BomCrud;
 use Modules\NsManufacturing\Crud\BomItemCrud;
 use Modules\NsManufacturing\Crud\ProductionOrderCrud;
+use Modules\NsManufacturing\Console\Commands\SyncManufacturingFlagsCommand;
+use Modules\NsManufacturing\Services\ManufacturingProductFlagSyncService;
 use Modules\NsManufacturing\Services\ProductFormHook;
 use Modules\NsManufacturing\Services\ProductUnitFormHook;
 use TorMorten\Eventy\Facades\Events as Hook;
@@ -23,15 +30,13 @@ class NsManufacturingServiceProvider extends ServiceProvider
 
     public function boot()
     {
-        // Run permission migration to ensure permissions exist
-        $this->runPermissionMigration();
-
         // Register the ProductUnitFormHook
         $this->app->make( ProductUnitFormHook::class );
         // Register the ProductFormHook
         $this->app->make( ProductFormHook::class );
 
         $this->loadMigrationsFrom( __DIR__ . '/../Migrations' );
+        $this->loadRoutesFrom( __DIR__ . '/../Routes/api.php' );
         $this->loadRoutesFrom( __DIR__ . '/../Routes/web.php' );
         $this->loadViewsFrom( __DIR__ . '/../Resources/views', 'ns-manufacturing' );
 
@@ -158,29 +163,73 @@ class NsManufacturingServiceProvider extends ServiceProvider
         Hook::addFilter( 'ns-products-crud-validate-put', function ( $inputs, $entry ) use ( $productFormHook ) {
             return $productFormHook->validateManufacturingFlags( $inputs, $entry );
         } );
+
+        Hook::addFilter('ns-products-units-quantities-fields-names', function ($fields) {
+            $fields[] = 'is_manufactured';
+            $fields[] = 'is_raw_material';
+
+            return array_values(array_unique($fields));
+        });
+
+        Hook::addFilter('ns-products-units-quantities-fields', function ($fields) {
+            $fields[] = [
+                'type' => 'switch',
+                'name' => 'is_manufactured',
+                'label' => __( 'Is Manufactured' ),
+                'description' => __( 'Check if this unit can be manufactured (used for production)' ),
+                'options' => Helper::boolToOptions(
+                    true: __( 'Yes' ),
+                    false: __( 'No' ),
+                ),
+                'value' => 0,
+            ];
+
+            $fields[] = [
+                'type' => 'switch',
+                'name' => 'is_raw_material',
+                'label' => __( 'Is Raw Material' ),
+                'description' => __( 'Check if this unit is a raw material (can be used as component)' ),
+                'options' => Helper::boolToOptions(
+                    true: __( 'Yes' ),
+                    false: __( 'No' ),
+                ),
+                'value' => 0,
+            ];
+
+            return $fields;
+        });
+
+        Hook::addFilter('ns-update-products-inputs', function ($inputs) {
+            unset($inputs['is_manufactured']);
+            unset($inputs['is_raw_material']);
+            return $inputs;
+        });
+
+        Hook::addFilter('ns-create-products-inputs', function ($inputs) {
+            unset($inputs['is_manufactured']);
+            unset($inputs['is_raw_material']);
+            return $inputs;
+        });
+
+        $syncService = $this->app->make(ManufacturingProductFlagSyncService::class);
+
+        Event::listen(ProductUnitQuantityAfterCreatedEvent::class, function ($event) use ($syncService) {
+            $syncService->syncProductFlags($event->productUnitQuantity->product_id);
+        });
+
+        Event::listen(ProductUnitQuantityAfterUpdatedEvent::class, function ($event) use ($syncService) {
+            $syncService->syncProductFlags($event->productUnitQuantity->product_id);
+        });
+
+        ProductUnitQuantity::deleted(function ($unitQuantity) use ($syncService) {
+            $syncService->syncProductFlags($unitQuantity->product_id);
+        });
+
+        if ($this->app->runningInConsole()) {
+            $this->commands([
+                SyncManufacturingFlagsCommand::class,
+            ]);
+        }
     }
 
-    /**
-     * Run the permission migration to ensure all manufacturing permissions exist.
-     * This is called on every boot to ensure the module is portable and
-     * permissions are always available when the module is enabled.
-     */
-    protected function runPermissionMigration(): void
-    {
-        $migrationPath = __DIR__ . '/../Migrations/2026_01_31_000001_create_manufacturing_permissions.php';
-
-        if ( ! file_exists( $migrationPath ) ) {
-            return;
-        }
-
-        try {
-            $migration = require $migrationPath;
-            if ( $migration instanceof \Illuminate\Database\Migrations\Migration ) {
-                $migration->up();
-            }
-        } catch ( \Exception $e ) {
-            // Silently fail if permissions table doesn't exist yet
-            // (e.g., during initial installation)
-        }
-    }
 }

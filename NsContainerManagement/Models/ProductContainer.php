@@ -13,6 +13,7 @@ class ProductContainer extends NsModel
 
     protected $fillable = [
         'product_id',
+        'unit_quantity_id',
         'unit_id',
         'container_type_id',
         'is_enabled',

@@ -110,7 +110,7 @@ class ProductUnitQuantityCrud extends CrudService
                             ['label' => __('Yes'), 'value' => 1],
                         ], (int) ($entry->is_raw_material ?? 0))
                             ->description(__('Check if this product is a raw material (can be used as component)')),
-                        FormInput::help(__('Note: At least one manufacturing flag must be selected. Manufactured products can be used for production, while both manufactured products and raw materials can be used as components.'))
+                        FormInput::help(__('Manufacturing roles: produced item only when "Is Manufactured" is enabled, BOM item only when "Is Raw Material" is enabled, both when both are enabled, and excluded from manufacturing when both are disabled.'))
                     )
                 ],
                 'pricing' => [
@@ -166,11 +166,6 @@ class ProductUnitQuantityCrud extends CrudService
         $inputs['is_manufactured'] = !empty($inputs['is_manufactured']) ? 1 : 0;
         $inputs['is_raw_material'] = !empty($inputs['is_raw_material']) ? 1 : 0;
         
-        // Validate manufacturing flags
-        if (empty($inputs['is_manufactured']) && empty($inputs['is_raw_material'])) {
-            throw new \Exception(__('At least one manufacturing flag must be selected (Is Manufactured or Is Raw Material).'));
-        }
-        
         if (empty($inputs['author'])) $inputs['author'] = auth()->id();
         if (empty($inputs['uuid'])) $inputs['uuid'] = \Illuminate\Support\Str::uuid();
         
@@ -185,11 +180,6 @@ class ProductUnitQuantityCrud extends CrudService
         // When a switch is unchecked, the browser doesn't send the field in the request
         $inputs['is_manufactured'] = !empty($inputs['is_manufactured']) ? 1 : 0;
         $inputs['is_raw_material'] = !empty($inputs['is_raw_material']) ? 1 : 0;
-        
-        // Validate manufacturing flags
-        if (empty($inputs['is_manufactured']) && empty($inputs['is_raw_material'])) {
-            throw new \Exception(__('At least one manufacturing flag must be selected (Is Manufactured or Is Raw Material).'));
-        }
         
         return $inputs;
     }

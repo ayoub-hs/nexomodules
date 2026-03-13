@@ -28,12 +28,21 @@ class SpecialCustomerService implements SpecialCustomerServiceInterface
     public function getConfig(): array
     {
         return Cache::remember('ns_special_customer_config', 3600, function () {
-            return [
-                'groupId' => $this->getSpecialGroupId(),
+            $groupId = $this->getSpecialGroupId();
+            $config = [
+                'groupId' => $groupId,
                 'discountPercentage' => $this->getDiscountPercentage(),
                 'cashbackPercentage' => $this->getCashbackPercentage(),
                 'applyDiscountStackable' => $this->isDiscountStackable(),
             ];
+            
+            \Log::debug('[SpecialCustomerService] Config loaded', [
+                'config' => $config,
+                'groupId_raw' => $groupId,
+                'groupId_type' => gettype($groupId),
+            ]);
+            
+            return $config;
         });
     }
 
@@ -308,13 +317,17 @@ class SpecialCustomerService implements SpecialCustomerServiceInterface
         // Handle both array and object cases
         $customerGroupId = is_array($customer) ? ($customer['group_id'] ?? null) : ($customer->group_id ?? null);
         
-        if (!$customerGroupId) {
+        if ($customerGroupId === null) {
             return false;
         }
 
         $specialGroupId = $this->getSpecialGroupId();
         
-        return $specialGroupId && (int) $customerGroupId === (int) $specialGroupId;
+        if ($specialGroupId === null) {
+            return false;
+        }
+
+        return (int) $customerGroupId === (int) $specialGroupId;
     }
 
     /**
@@ -349,7 +362,8 @@ class SpecialCustomerService implements SpecialCustomerServiceInterface
         $defaults = $this->getDefaultConfig();
         
         foreach ($defaults as $key => $value) {
-            if ($this->options->get($key) === null) {
+            $current = $this->options->get($key);
+            if ($current === null || $current === '') {
                 $this->options->set($key, $value);
             }
         }

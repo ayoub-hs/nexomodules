@@ -119,7 +119,7 @@
 </div>
 @endsection
 
-@section('layout.dashboard.footer.js')
+@section('layout.dashboard.footer.inject')
 <script>
 let currentPage = 1;
 const perPage = 25;

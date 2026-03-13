@@ -25,66 +25,103 @@ class WalletService implements WalletServiceInterface
     /**
      * Process top-up with double-entry ledger and transaction safety
      */
-    public function processTopup(int $customerId, float $amount, string $description, string $reference = 'ns_special_topup'): array
+    public function processTopup(
+        int $customerId,
+        float $amount,
+        string $description,
+        string $reference = 'ns_special_topup',
+        ?string $receivedDate = null
+    ): array
     {
-        return DB::transaction(function () use ($customerId, $amount, $description, $reference) {
-            // Validate inputs
-            if ($amount == 0) {
-                return [
-                    'success' => false,
-                    'message' => __('Amount cannot be zero'),
-                    'transaction_id' => null,
-                ];
-            }
+        try {
+            return DB::transaction(function () use ($customerId, $amount, $description, $reference, $receivedDate) {
+                // Validate inputs
+                if ($amount == 0) {
+                    return [
+                        'success' => false,
+                        'message' => __('Amount cannot be zero'),
+                        'transaction_id' => null,
+                    ];
+                }
 
-            $customer = Customer::query()
-                ->where('id', $customerId)
-                ->lockForUpdate()
-                ->firstOrFail();
+                $customer = Customer::query()
+                    ->where('id', $customerId)
+                    ->lockForUpdate()
+                    ->firstOrFail();
 
-            $previousBalance = $customer->account_amount;
-            $operation = $amount > 0
-                ? CustomerAccountHistory::OPERATION_ADD
-                : CustomerAccountHistory::OPERATION_DEDUCT;
-            $amountValue = abs($amount);
+                $previousBalance = $customer->account_amount;
+                
+                // For withdrawals, check balance first to provide a cleaner message than the core exception
+                if ($amount < 0 && $previousBalance < abs($amount)) {
+                    return [
+                        'success' => false,
+                        'message' => __('Insufficient balance for this operation'),
+                        'transaction_id' => null,
+                    ];
+                }
 
-            $result = $this->customerService->saveTransaction(
-                customer: $customer,
-                operation: $operation,
-                amount: $amountValue,
-                description: $description,
-                details: [
+                $operation = $amount > 0
+                    ? CustomerAccountHistory::OPERATION_ADD
+                    : CustomerAccountHistory::OPERATION_DEDUCT;
+                $amountValue = abs($amount);
+
+                $details = [
                     'author' => auth()->id() ?? 1,
                     'reference' => $reference,
-                ]
-            );
+                ];
 
-            $customer->refresh();
-            $newBalance = $customer->account_amount;
+                if (!empty($receivedDate)) {
+                    $details['received_date'] = Carbon::parse($receivedDate)->toDateString();
+                }
 
-            // Clear customer cache
-            $this->clearCustomerCache($customerId);
+                $result = $this->customerService->saveTransaction(
+                    customer: $customer,
+                    operation: $operation,
+                    amount: $amountValue,
+                    description: $description,
+                    details: $details
+                );
 
-            $this->auditService->logTopupOperation(
-                customerId: $customerId,
-                amount: $amount,
-                operation: $amount > 0 ? 'credit' : 'debit',
-                metadata: [
-                    'reference' => $reference,
+                $customer->refresh();
+                $newBalance = $customer->account_amount;
+
+                // Clear customer cache
+                $this->clearCustomerCache($customerId);
+
+                $this->auditService->logTopupOperation(
+                    customerId: $customerId,
+                    amount: $amount,
+                    operation: $amount > 0 ? 'credit' : 'debit',
+                    metadata: [
+                        'reference' => $reference,
+                        'received_date' => !empty($receivedDate) ? Carbon::parse($receivedDate)->toDateString() : null,
+                        'previous_balance' => $previousBalance,
+                        'new_balance' => $newBalance,
+                    ]
+                );
+
+                return [
+                    'success' => true,
+                    'message' => __('Transaction processed successfully'),
+                    'transaction_id' => $result['data']['customerAccountHistory']->id ?? null,
                     'previous_balance' => $previousBalance,
                     'new_balance' => $newBalance,
-                ]
-            );
-
+                    'amount' => $amount,
+                ];
+            });
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return [
-                'success' => true,
-                'message' => __('Transaction processed successfully'),
-                'transaction_id' => $result['data']['customerAccountHistory']->id ?? null,
-                'previous_balance' => $previousBalance,
-                'new_balance' => $newBalance,
-                'amount' => $amount,
+                'success' => false,
+                'message' => __('Customer not found'),
+                'transaction_id' => null,
             ];
-        });
+        } catch (\Exception $e) {
+            return [
+                'success' => false,
+                'message' => $e->getMessage(),
+                'transaction_id' => null,
+            ];
+        }
     }
 
     /**
@@ -126,6 +163,10 @@ class WalletService implements WalletServiceInterface
 
         if (! empty($filters['max_amount'])) {
             $query->where('amount', '<=', $filters['max_amount']);
+        }
+
+        if (! empty($filters['reference'])) {
+            $query->where('reference', $filters['reference']);
         }
 
         return $query->paginate($perPage)->toArray();

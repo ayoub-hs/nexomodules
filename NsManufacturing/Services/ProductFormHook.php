@@ -61,35 +61,37 @@ class ProductFormHook
             // Remove the last tab
             unset( $tabs[$lastKey] );
 
-            // Add manufacturing tab
+            // Add manufacturing tab (read-only summary)
             $tabs['manufacturing'] = [
                 'label' => __( 'Manufacturing' ),
                 'fields' => [
                     [
                         'type' => 'switch',
                         'name' => 'is_manufactured',
-                        'label' => __( 'Is Manufactured' ),
-                        'description' => __( 'Check if this product can be manufactured (used for production)' ),
+                        'label' => __( 'Is Manufactured (Derived)' ),
+                        'description' => __( 'Derived from unit quantities.' ),
                         'value' => (int) ($entry->is_manufactured ?? 0),
                         'options' => [
                             ['label' => __('Yes'), 'value' => 1],
                             ['label' => __('No'), 'value' => 0],
                         ],
+                        'disabled' => true,
                     ],
                     [
                         'type' => 'switch',
                         'name' => 'is_raw_material',
-                        'label' => __( 'Is Raw Material' ),
-                        'description' => __( 'Check if this product is a raw material (can be used as component)' ),
+                        'label' => __( 'Is Raw Material (Derived)' ),
+                        'description' => __( 'Derived from unit quantities.' ),
                         'value' => (int) ($entry->is_raw_material ?? 0),
                         'options' => [
                             ['label' => __('No'), 'value' => 0],
                             ['label' => __('Yes'), 'value' => 1],
                         ],
+                        'disabled' => true,
                     ],
                     [
                         'type' => 'help',
-                        'content' => __( 'Note: At least one manufacturing flag must be selected. Manufactured products can be used for production, while both manufactured products and raw materials can be used as components.' ),
+                        'content' => __( 'Manufacturing flags are configured per unit in the Units tab.' ),
                     ],
                 ],
             ];
@@ -143,11 +145,6 @@ class ProductFormHook
     {
         // Get the input data from the request
         $inputs = $request->all();
-
-        // Check if at least one manufacturing flag is selected
-        if ( empty( $inputs['is_manufactured'] ) && empty( $inputs['is_raw_material'] ) ) {
-            $validation->errors()->add( 'is_manufactured', __( 'At least one manufacturing flag must be selected (Is Manufactured or Is Raw Material).' ) );
-        }
 
         // Add validation rules for manufacturing fields
         $validation->addRules( [

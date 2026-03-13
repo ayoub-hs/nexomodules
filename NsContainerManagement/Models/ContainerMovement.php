@@ -47,11 +47,10 @@ class ContainerMovement extends NsModel
         'updated_at' => 'datetime',
     ];
 
-    protected static function booted()
+    protected static function booted(): void
     {
         static::created(function ($movement) {
-            $ledgerService = app(ContainerLedgerService::class);
-            $ledgerService->handleMovementEffect($movement);
+            app(ContainerLedgerService::class)->handleMovementEffect($movement);
         });
     }
 

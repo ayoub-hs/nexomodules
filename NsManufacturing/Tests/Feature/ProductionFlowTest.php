@@ -6,6 +6,7 @@ use Tests\TestCase;
 use Illuminate\Foundation\Testing\WithFaker;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use App\Models\User;
+use App\Models\UserAttribute;
 use App\Models\Product;
 use App\Models\Unit;
 use App\Models\UnitGroup;
@@ -14,6 +15,7 @@ use Modules\NsManufacturing\Models\ManufacturingBom;
 use Modules\NsManufacturing\Models\ManufacturingBomItem;
 use Modules\NsManufacturing\Models\ManufacturingOrder;
 use Modules\NsManufacturing\Models\ManufacturingStockMovement;
+use Modules\TestSupport\Testing\ModuleTestDatabaseBootstrap;
 
 class ProductionFlowTest extends TestCase
 {
@@ -28,15 +30,61 @@ class ProductionFlowTest extends TestCase
 
     public function setUp(): void
     {
+        putenv('AUTOLOAD_MODULES=NsManufacturing');
+
         parent::setUp();
+
+        ModuleTestDatabaseBootstrap::prepare($this, 'modules/NsManufacturing/Migrations');
         
         // Log in as admin
-        $this->user = User::first() ?? User::factory()->create();
+        $this->user = User::where('username', 'admin')->first() ?? User::factory()->create(['username' => 'admin']);
+        
+        // Fix for DateService core bug: ensure user has an attribute
+        if (!$this->user->attribute) {
+            $attribute = new UserAttribute([
+                'language' => 'en'
+            ]);
+            $attribute->user_id = $this->user->id;
+            $attribute->save();
+            $this->user->refresh();
+        }
+        
+        $this->user->assignRole('admin');
         $this->actingAs($this->user);
+        \App\Models\Role::namespace(\App\Models\Role::ADMIN)?->addPermissions([
+            'nexopos.create.manufacturing-recipes',
+            'nexopos.read.manufacturing-recipes',
+            'nexopos.update.manufacturing-recipes',
+            'nexopos.delete.manufacturing-recipes',
+            'nexopos.create.manufacturing-orders',
+            'nexopos.read.manufacturing-orders',
+            'nexopos.update.manufacturing-orders',
+            'nexopos.delete.manufacturing-orders',
+            'nexopos.start.manufacturing-orders',
+            'nexopos.complete.manufacturing-orders',
+            'nexopos.cancel.manufacturing-orders',
+            'nexopos.view.manufacturing-costs',
+            'nexopos.export.manufacturing-reports',
+        ]);
+        \App\Classes\Hook::addFilter('ns-products-decrease-actions', function ($actions) {
+            $actions[] = 'manufacturing_consume';
+            return $actions;
+        });
+        \App\Classes\Hook::addFilter('ns-products-increase-actions', function ($actions) {
+            $actions[] = 'manufacturing_produce';
+            return $actions;
+        });
 
         // Setup Units
         $unitGroup = UnitGroup::first() ?? UnitGroup::forceCreate(['name' => 'General', 'author' => $this->user->id]);
-        $this->unit = Unit::first() ?? Unit::forceCreate(['name' => 'Piece', 'group_id' => $unitGroup->id, 'author' => $this->user->id]);
+        $this->unit = Unit::first() ?? Unit::forceCreate([
+            'name' => 'Piece',
+            'identifier' => 'piece',
+            'value' => 1,
+            'base_unit' => true,
+            'group_id' => $unitGroup->id,
+            'author' => $this->user->id
+        ]);
 
         // Setup Products
         $this->materialA = $this->createProduct('Material A', 10); // Cost 10
@@ -136,8 +184,8 @@ class ProductionFlowTest extends TestCase
         $this->assertEquals('planned', $order->status);
 
         // 2. Start Order (Deduct Stock)
-        $controller = app(\Modules\NsManufacturing\Http\Controllers\ManufacturingController::class);
-        $controller->startOrder($order->id);
+        $productionService = app(\Modules\NsManufacturing\Services\ProductionService::class);
+        $productionService->startOrder($order);
 
         $order->refresh();
         $this->assertEquals('in_progress', $order->status);
@@ -149,7 +197,7 @@ class ProductionFlowTest extends TestCase
         ]);
 
         // 3. Complete Order (Add Stock)
-        $controller->completeOrder($order->id);
+        $productionService->completeOrder($order);
 
         $order->refresh();
         $this->assertEquals('completed', $order->status);

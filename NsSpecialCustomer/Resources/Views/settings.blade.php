@@ -60,6 +60,6 @@ use App\Classes\Hook;
     </div>
 @endsection
 
-@section('layout.dashboard.footer.js')
+@section('layout.dashboard.footer.inject')
     <script src="{{ asset('modules/NsSpecialCustomer/js/special-customer-settings.js') }}"></script>
 @endsection

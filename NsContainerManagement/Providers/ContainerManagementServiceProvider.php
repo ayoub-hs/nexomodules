@@ -7,10 +7,8 @@ use TorMorten\Eventy\Facades\Events as Hook;
 use Modules\NsContainerManagement\Services\ContainerService;
 use Modules\NsContainerManagement\Services\ContainerLedgerService;
 use App\Models\Order;
-use App\Models\Permission;
 use App\Models\Product;
 use App\Models\ProductUnitQuantity;
-use App\Models\Role;
 use App\Events\OrderAfterCreatedEvent;
 use Illuminate\Support\Facades\Event;
 use App\Events\RenderFooterEvent;
@@ -56,6 +54,14 @@ class ContainerManagementServiceProvider extends ServiceProvider
             $containerService = app(ContainerService::class);
             $request = request();
 
+            // Helper to resolve unit_id to unit_quantity_id
+            $resolveUnitQuantityId = function(int $productId, int $unitId): ?int {
+                $unitQuantity = \App\Models\ProductUnitQuantity::where('product_id', $productId)
+                    ->where('unit_id', $unitId)
+                    ->first();
+                return $unitQuantity ? $unitQuantity->id : null;
+            };
+
             if ($request->has('variations')) {
                 $variations = $request->input('variations');
 
@@ -80,12 +86,18 @@ class ContainerManagementServiceProvider extends ServiceProvider
                         // Structure is: ['unit_id' => 1, 'container_type_id' => '', ...]
                         $unitId = $fields['unit_id'] ?? null;
                         $typeId = $fields['container_type_id'] ?? null;
-
+                        
+                        // Resolve unit_id to unit_quantity_id
+                        $unitQuantityId = null;
                         if ($unitId) {
+                            $unitQuantityId = $resolveUnitQuantityId($product->id, $unitId);
+                        }
+
+                        if ($unitQuantityId || $unitId) {
                             if (empty($typeId)) {
-                                $containerService->unlinkProductFromContainer($product->id, $unitId);
+                                $containerService->unlinkProductFromContainer($product->id, $unitQuantityId);
                             } else {
-                                $containerService->linkProductToContainer($product->id, (int) $typeId, $unitId);
+                                $containerService->linkProductToContainer($product->id, (int) $typeId, $unitQuantityId, $unitId);
                             }
                         }
                     }
@@ -106,12 +118,18 @@ class ContainerManagementServiceProvider extends ServiceProvider
                             // Structure is: ['unit_id' => 1, 'container_type_id' => '', ...]
                             $unitId = $fields['unit_id'] ?? null;
                             $typeId = $fields['container_type_id'] ?? null;
-
+                            
+                            // Resolve unit_id to unit_quantity_id
+                            $unitQuantityId = null;
                             if ($unitId) {
+                                $unitQuantityId = $resolveUnitQuantityId($product->id, $unitId);
+                            }
+
+                            if ($unitQuantityId || $unitId) {
                                 if (empty($typeId)) {
-                                    $containerService->unlinkProductFromContainer($product->id, $unitId);
+                                    $containerService->unlinkProductFromContainer($product->id, $unitQuantityId);
                                 } else {
-                                    $containerService->linkProductToContainer($product->id, (int) $typeId, $unitId);
+                                    $containerService->linkProductToContainer($product->id, (int) $typeId, $unitQuantityId, $unitId);
                                 }
                             }
                         }
@@ -179,11 +197,19 @@ class ContainerManagementServiceProvider extends ServiceProvider
 
             $containerService = app(ContainerService::class);
 
+            // Helper to resolve unit_id to unit_quantity_id
+            $resolveUnitQuantityId = function(int $productId, int $unitId): ?int {
+                $unitQuantity = \App\Models\ProductUnitQuantity::where('product_id', $productId)
+                    ->where('unit_id', $unitId)
+                    ->first();
+                return $unitQuantity ? $unitQuantity->id : null;
+            };
+
             /**
              * Helper function to process selling_group fields and populate container_type_id.
              * Uses array index access to avoid reference issues with Collections.
              */
-            $processSellingGroup = function(&$fields, $productId) use ($containerService) {
+            $processSellingGroup = function(&$fields, $productId) use ($containerService, $resolveUnitQuantityId) {
                 $updatedCount = 0;
                 foreach ($fields as $fieldIndex => &$field) {
                     if (($field['name'] ?? '') === 'selling_group' && isset($field['groups'])) {
@@ -196,6 +222,7 @@ class ContainerManagementServiceProvider extends ServiceProvider
                         
                         foreach ($groups as $groupIndex => &$group) {
                             $unitId = null;
+                            $unitQuantityId = null;
                             $fieldNames = [];
                             
                             // Convert group fields to array if needed
@@ -208,12 +235,26 @@ class ContainerManagementServiceProvider extends ServiceProvider
                                 foreach ($groupFields as $idx => $f) {
                                     if (($f['name'] ?? '') === 'unit_id') {
                                         $unitId = $f['value'] ?? null;
+                                        // Resolve to unit_quantity_id
+                                        if ($unitId) {
+                                            $unitQuantityId = $resolveUnitQuantityId($productId, $unitId);
+                                        }
                                     }
                                 }
                             }
 
-                            if ($unitId) {
-                                $link = $containerService->getProductContainer($productId, $unitId);
+                            if ($unitQuantityId || $unitId) {
+                                // Try to get link by unit_quantity_id first, then fallback to unit_id
+                                $link = null;
+                                if ($unitQuantityId) {
+                                    $link = $containerService->getProductContainer($productId, $unitQuantityId);
+                                }
+                                if (!$link && $unitId) {
+                                    // Fallback: try to get by unit_id for backward compatibility
+                                    $link = \Modules\NsContainerManagement\Models\ProductContainer::where('product_id', $productId)
+                                        ->where('unit_id', $unitId)
+                                        ->first();
+                                }
                                 $typeId = $link ? (string) $link->container_type_id : '';
 
                                 // Find and update the container_type_id field
@@ -340,64 +381,5 @@ class ContainerManagementServiceProvider extends ServiceProvider
         });
     }
 
-    /**
-     * Run the permission migration to ensure all container management permissions exist.
-     * This is called on every boot to ensure the module is portable and
-     * permissions are always available when the module is enabled.
-     */
-    protected function runPermissionMigration(): void
-    {
-        $migrationPath = __DIR__ . '/../Migrations/2026_01_11_000008_create_container_permissions.php';
-
-        if (! file_exists($migrationPath)) {
-            return;
-        }
-
-        try {
-            $migration = require $migrationPath;
-            if ($migration instanceof \Illuminate\Database\Migrations\Migration) {
-                $migration->up();
-            }
-
-            // Assign container permissions to admin and store-admin roles
-            $this->assignContainerPermissionsToRoles();
-        } catch (\Exception $e) {
-            // Silently fail if permissions table doesn't exist yet
-            // (e.g., during initial installation)
-        }
-    }
-
-    /**
-     * Assign container permissions to admin and store-admin roles.
-     * This keeps the module self-contained and avoids modifying core permission files.
-     */
-    protected function assignContainerPermissionsToRoles(): void
-    {
-        try {
-            // Get all container-related permissions
-            $containerPermissions = Permission::includes('.container-')
-                ->orWhere('namespace', 'like', '%.containers')
-                ->get()
-                ->map(fn ($permission) => $permission->namespace)
-                ->toArray();
-
-            if (empty($containerPermissions)) {
-                return;
-            }
-
-            // Assign to admin role
-            $adminRole = Role::where('namespace', 'admin')->first();
-            if ($adminRole) {
-                $adminRole->addPermissions($containerPermissions);
-            }
-
-            // Assign to store-admin role
-            $storeAdminRole = Role::where('namespace', 'nexopos.store.administrator')->first();
-            if ($storeAdminRole) {
-                $storeAdminRole->addPermissions($containerPermissions);
-            }
-        } catch (\Exception $e) {
-            // Silently fail if roles/permissions tables don't exist yet
-        }
-    }
 }
+

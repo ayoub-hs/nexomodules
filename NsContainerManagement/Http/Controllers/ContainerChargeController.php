@@ -5,6 +5,7 @@ namespace Modules\NsContainerManagement\Http\Controllers;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Modules\NsContainerManagement\Http\Requests\ChargeCustomerRequest;
 use Modules\NsContainerManagement\Models\ContainerType;
 use Modules\NsContainerManagement\Models\CustomerContainerBalance;
 use Modules\NsContainerManagement\Services\ContainerLedgerService;
@@ -49,14 +50,9 @@ class ContainerChargeController extends Controller
      * POST /api/container-management/charge
      * Charge customer for unreturned containers - creates POS transaction
      */
-    public function charge(Request $request): JsonResponse
+    public function charge(ChargeCustomerRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'customer_id' => 'required|exists:nexopos_users,id',
-            'container_type_id' => 'required|exists:ns_container_types,id',
-            'quantity' => 'required|integer|min:1',
-            'note' => 'nullable|string',
-        ]);
+        $validated = $request->validated();
 
         // Verify customer has this balance
         $balance = CustomerContainerBalance::forCustomer($validated['customer_id'])

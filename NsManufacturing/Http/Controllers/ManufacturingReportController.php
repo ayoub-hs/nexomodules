@@ -53,6 +53,12 @@ class ManufacturingReportController extends Controller
         if (! empty($validated['to'])) {
             $query->whereDate('created_at', '<=', $validated['to']);
         }
+        if (! empty($validated['status'])) {
+            $query->where('status', $validated['status']);
+        }
+        if (! empty($validated['product_id'])) {
+            $query->where('product_id', $validated['product_id']);
+        }
 
         $orders = $query->get();
         $completed = $orders->where('status', ManufacturingOrder::STATUS_COMPLETED);

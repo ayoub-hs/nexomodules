@@ -4,16 +4,18 @@
 <div class="h-full flex flex-col flex-auto">
     @include(Hook::filter('ns-dashboard-header-file', '../common/dashboard-header'))
     <div class="px-4 flex-auto flex flex-col" id="dashboard-content">
-        @include('common.dashboard.title')
+        @include('common.dashboard.title', [
+            'title' => __('Edit Cashback'),
+            'description' => __('Update a pending cashback entry for a special customer.'),
+        ])
         <ns-crud-form 
             return-url="{{ url('/dashboard/special-customer/cashback') }}"
+            submit-method="put"
             submit-url="{{ url('/api/crud/ns.special-customer-cashback/' . $id) }}"
-            src="{{ url('/api/crud/ns.special-customer-cashback/form-config') }}"
-            :data='{ "id": {{ $id }} }'>
+            src="{{ url('/api/crud/ns.special-customer-cashback/form-config/' . $id) }}">
             <template v-slot:title>Edit Cashback</template>
             <template v-slot:save>Update Cashback</template>
         </ns-crud-form>
     </div>
 </div>
 @endsection
-

@@ -13,8 +13,8 @@ class AuditService
     public function logConfigChange(array $oldConfig, array $newConfig, string $reason = null): void
     {
         $user = Auth::user();
-        
-        Log::channel('audit')->warning('Special Customer Configuration Changed', [
+
+        $this->write('warning', 'Special Customer Configuration Changed', [
             'user_id' => $user?->id,
             'user_email' => $user?->email,
             'ip_address' => request()->ip(),
@@ -32,8 +32,8 @@ class AuditService
     public function logCashbackProcessing(int $customerId, float $amount, string $status, array $metadata = []): void
     {
         $user = Auth::user();
-        
-        Log::channel('audit')->info('Special Customer Cashback Processed', [
+
+        $this->write('info', 'Special Customer Cashback Processed', [
             'user_id' => $user?->id,
             'user_email' => $user?->email,
             'customer_id' => $customerId,
@@ -50,8 +50,8 @@ class AuditService
     public function logTopupOperation(int $customerId, float $amount, string $operation, array $metadata = []): void
     {
         $user = Auth::user();
-        
-        Log::channel('audit')->info('Special Customer Top-up Operation', [
+
+        $this->write('info', 'Special Customer Top-up Operation', [
             'user_id' => $user?->id,
             'user_email' => $user?->email,
             'customer_id' => $customerId,
@@ -68,8 +68,8 @@ class AuditService
     public function logPermissionChange(int $userId, array $permissions, string $action): void
     {
         $currentUser = Auth::user();
-        
-        Log::channel('audit')->warning('Special Customer Permission Changed', [
+
+        $this->write('warning', 'Special Customer Permission Changed', [
             'admin_user_id' => $currentUser?->id,
             'admin_user_email' => $currentUser?->email,
             'target_user_id' => $userId,
@@ -106,8 +106,8 @@ class AuditService
     public function logSecurityEvent(string $event, array $context = []): void
     {
         $user = Auth::user();
-        
-        Log::channel('audit')->critical('Special Customer Security Event', [
+
+        $this->write('critical', 'Special Customer Security Event', [
             'user_id' => $user?->id,
             'user_email' => $user?->email,
             'ip_address' => request()->ip(),
@@ -124,8 +124,8 @@ class AuditService
     public function logDataAccess(string $resource, int $resourceId, string $action): void
     {
         $user = Auth::user();
-        
-        Log::channel('audit')->info('Special Customer Data Access', [
+
+        $this->write('info', 'Special Customer Data Access', [
             'user_id' => $user?->id,
             'user_email' => $user?->email,
             'resource' => $resource,
@@ -133,5 +133,14 @@ class AuditService
             'action' => $action, // 'view', 'export', etc.
             'timestamp' => now()->toISOString(),
         ]);
+    }
+
+    private function write(string $level, string $message, array $context = []): void
+    {
+        try {
+            Log::channel('audit')->{$level}($message, $context);
+        } catch (\Throwable $exception) {
+            Log::{$level}($message, $context);
+        }
     }
 }

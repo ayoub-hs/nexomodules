@@ -7,8 +7,9 @@ use Modules\NsContainerManagement\Http\Controllers\ContainerMovementController;
 use Modules\NsContainerManagement\Http\Controllers\ContainerTypeController;
 use Modules\NsContainerManagement\Http\Controllers\CustomerContainerController;
 use Modules\NsContainerManagement\Http\Controllers\ProductContainerController;
+use Modules\NsContainerManagement\Http\Middleware\NoCacheHeaders;
 
-Route::prefix('container-management')->middleware(['auth:sanctum'])->group(function () {
+Route::prefix('container-management')->middleware(['auth:sanctum', NoCacheHeaders::class])->group(function () {
     
     // Container Types
     Route::get('types', [ContainerTypeController::class, 'index']);

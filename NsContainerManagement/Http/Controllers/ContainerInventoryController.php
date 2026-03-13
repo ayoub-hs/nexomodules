@@ -5,6 +5,7 @@ namespace Modules\NsContainerManagement\Http\Controllers;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Modules\NsContainerManagement\Http\Requests\AdjustInventoryRequest;
 use Modules\NsContainerManagement\Models\ContainerInventory;
 use Modules\NsContainerManagement\Models\ContainerMovement;
 use Modules\NsContainerManagement\Services\ContainerService;
@@ -44,39 +45,34 @@ class ContainerInventoryController extends Controller
     /**
      * POST /api/container-management/inventory/adjust
      */
-    public function adjust(Request $request): JsonResponse
+    public function adjust(AdjustInventoryRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'container_type_id' => 'required|exists:ns_container_types,id',
-            'adjustment' => 'required|integer',
-            'reason' => 'required|string|max:255',
-        ]);
+        $validated = $request->validated();
 
-        $inventory = $this->containerService->adjustInventory(
-            $validated['container_type_id'],
-            $validated['adjustment'],
-            $validated['reason']
-        );
-
-        // Create adjustment movement for audit trail
+        // Create the movement record first — the ContainerMovement::booted() event
+        // calls handleMovementEffect() which adjusts inventory for direction=adjustment.
+        // Do NOT also call containerService->adjustInventory() here, that would double-apply.
         ContainerMovement::create([
             'container_type_id' => $validated['container_type_id'],
-            'customer_id' => null,
-            'order_id' => null,
-            'direction' => ContainerMovement::DIRECTION_ADJUSTMENT,
-            'quantity' => abs($validated['adjustment']),
-            'unit_deposit_fee' => 0,
+            'customer_id'       => null,
+            'order_id'          => null,
+            'direction'         => ContainerMovement::DIRECTION_ADJUSTMENT,
+            'quantity'          => $validated['adjustment'],  // keep sign for direction-aware logic
+            'unit_deposit_fee'  => 0,
             'total_deposit_value' => 0,
-            'source_type' => ContainerMovement::SOURCE_INVENTORY_ADJUSTMENT,
-            'note' => $validated['reason'],
-            'author' => auth()->id() ?? 0,
-            'created_at' => now(),
+            'source_type'       => ContainerMovement::SOURCE_INVENTORY_ADJUSTMENT,
+            'note'              => $validated['reason'] ?? null,
+            'author'            => auth()->id() ?? 0,
         ]);
 
+        $inventory = ContainerInventory::with('containerType')
+            ->where('container_type_id', $validated['container_type_id'])
+            ->firstOrFail();
+
         return response()->json([
-            'status' => 'success',
+            'status'  => 'success',
             'message' => __('Inventory adjusted successfully'),
-            'data' => $inventory,
+            'data'    => $inventory,
         ]);
     }
 

@@ -4,6 +4,7 @@ namespace Modules\NsManufacturing\Services;
 
 use App\Models\ProductUnitQuantity;
 use Modules\NsManufacturing\Models\ProductUnitQuantity as ManufacturingProductUnitQuantity;
+use Modules\NsManufacturing\Services\ManufacturingProductFlagSyncService;
 use Exception;
 
 class ManufacturingFlagService
@@ -20,11 +21,6 @@ class ManufacturingFlagService
     public function setManufacturingFlags(int $productUnitQuantityId, bool $isManufactured, bool $isRawMaterial): ManufacturingProductUnitQuantity
     {
         $productUnit = ManufacturingProductUnitQuantity::findOrFail($productUnitQuantityId);
-        
-        // Validate that at least one flag is true
-        if (!$isManufactured && !$isRawMaterial) {
-            throw new Exception('At least one manufacturing flag must be true (is_manufactured or is_raw_material)');
-        }
         
         // Validate business rules
         $this->validateManufacturingFlags($productUnit, $isManufactured, $isRawMaterial);
@@ -46,8 +42,8 @@ class ManufacturingFlagService
      */
     private function validateManufacturingFlags(ManufacturingProductUnitQuantity $productUnit, bool $isManufactured, bool $isRawMaterial): void
     {
-        // Check if product is already used in active BOMs
-        if ($isManufactured || $isRawMaterial) {
+        // Removing raw-material eligibility can invalidate active BOM components.
+        if (!$isRawMaterial) {
             $this->validateProductUsageInBoms($productUnit);
         }
         
@@ -127,10 +123,7 @@ class ManufacturingFlagService
     public function canBeUsedAsComponent(int $productUnitQuantityId): bool
     {
         return ManufacturingProductUnitQuantity::where('id', $productUnitQuantityId)
-            ->where(function($query) {
-                $query->where('is_raw_material', true)
-                      ->orWhere('is_manufactured', true);
-            })
+            ->where('is_raw_material', true)
             ->exists();
     }
 
@@ -146,11 +139,6 @@ class ManufacturingFlagService
     public function updateManufacturingFlags(int $productUnitId, bool $isManufactured, bool $isRawMaterial): bool
     {
         $productUnit = ManufacturingProductUnitQuantity::findOrFail($productUnitId);
-
-        // Validate that at least one flag is true
-        if (! $isManufactured && ! $isRawMaterial) {
-            throw new Exception('At least one manufacturing flag must be true (is_manufactured or is_raw_material)');
-        }
 
         // Validate business rules
         $this->validateManufacturingFlags($productUnit, $isManufactured, $isRawMaterial);
@@ -172,22 +160,30 @@ class ManufacturingFlagService
      */
     public function bulkUpdateManufacturingFlags(array $productUnitIds, bool $isManufactured, bool $isRawMaterial): int
     {
-        // Validate that at least one flag is true
-        if (!$isManufactured && !$isRawMaterial) {
-            throw new Exception('At least one manufacturing flag must be true (is_manufactured or is_raw_material)');
-        }
+        $productIds = [];
 
         // Validate all products before bulk update
         foreach ($productUnitIds as $id) {
             $productUnit = ManufacturingProductUnitQuantity::findOrFail($id);
-            $this->validateProductUsageInBoms($productUnit);
+            $this->validateManufacturingFlags($productUnit, $isManufactured, $isRawMaterial);
+            $productIds[] = $productUnit->product_id;
         }
 
-        return ManufacturingProductUnitQuantity::whereIn('id', $productUnitIds)
+        $updated = ManufacturingProductUnitQuantity::whereIn('id', $productUnitIds)
             ->update([
                 'is_manufactured' => $isManufactured,
                 'is_raw_material' => $isRawMaterial,
             ]);
+
+        $productIds = array_values(array_unique($productIds));
+        if (! empty($productIds)) {
+            $syncService = app(ManufacturingProductFlagSyncService::class);
+            foreach ($productIds as $productId) {
+                $syncService->syncProductFlags($productId);
+            }
+        }
+
+        return $updated;
     }
 
     /**

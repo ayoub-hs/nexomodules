@@ -94,7 +94,7 @@ class ProductUnitFormHook
                     ],
                     [
                         'type' => 'help',
-                        'content' => __( 'Note: At least one manufacturing flag must be selected. Manufactured products can be used for production, while both manufactured products and raw materials can be used as components.' ),
+                        'content' => __( 'Manufacturing roles: produced item only when "Is Manufactured" is enabled, BOM item only when "Is Raw Material" is enabled, both when both are enabled, and excluded from manufacturing when both are disabled.' ),
                     ],
                 ],
             ];
@@ -173,11 +173,6 @@ class ProductUnitFormHook
     {
         // Get the input data from the request
         $inputs = $request->all();
-
-        // Check if at least one manufacturing flag is selected
-        if ( empty( $inputs['is_manufactured'] ) && empty( $inputs['is_raw_material'] ) ) {
-            $validation->errors()->add( 'is_manufactured', __( 'At least one manufacturing flag must be selected (Is Manufactured or Is Raw Material).' ) );
-        }
 
         // Add validation rules for manufacturing fields
         $validation->addRules( [

@@ -16,6 +16,7 @@ use Modules\NsSpecialCustomer\Crud\SpecialCustomerCrud;
 use Modules\NsSpecialCustomer\Listeners\RenderFooterListener;
 use Modules\NsSpecialCustomer\Services\AuditService;
 use Modules\NsSpecialCustomer\Services\CashbackService;
+use Modules\NsSpecialCustomer\Services\OutstandingTicketPaymentService;
 use Modules\NsSpecialCustomer\Services\SpecialCustomerService;
 use Modules\NsSpecialCustomer\Services\WalletService;
 use TorMorten\Eventy\Facades\Events as Hook;
@@ -31,8 +32,19 @@ class NsSpecialCustomerServiceProvider extends ServiceProvider
         $router->aliasMiddleware( 'ns.special-customer.balance-access', \Modules\NsSpecialCustomer\Http\Middleware\CheckBalanceAccess::class );
 
         // Register services as singletons for performance
+        $this->app->singleton( AuditService::class, function ( $app ) {
+            return new AuditService();
+        } );
+
         $this->app->singleton( SpecialCustomerService::class, function ( $app ) {
             return new SpecialCustomerService( $app->make( \App\Services\Options::class ) );
+        } );
+
+        $this->app->singleton( WalletService::class, function ( $app ) {
+            return new WalletService(
+                $app->make( \App\Services\CustomerService::class ),
+                $app->make( AuditService::class )
+            );
         } );
 
         $this->app->singleton( CashbackService::class, function ( $app ) {
@@ -42,9 +54,10 @@ class NsSpecialCustomerServiceProvider extends ServiceProvider
             );
         } );
 
-        $this->app->singleton( WalletService::class, function ( $app ) {
-            return new WalletService(
-                $app->make( \App\Services\CustomerService::class ),
+        $this->app->singleton( OutstandingTicketPaymentService::class, function ( $app ) {
+            return new OutstandingTicketPaymentService(
+                $app->make( \App\Services\OrdersService::class ),
+                $app->make( SpecialCustomerService::class ),
                 $app->make( AuditService::class )
             );
         } );
@@ -52,7 +65,6 @@ class NsSpecialCustomerServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        $this->runPermissionMigration();
         $this->loadMigrationsFrom( __DIR__ . '/../Migrations' );
         $this->loadViewsFrom( __DIR__ . '/../Resources/Views', 'NsSpecialCustomer' );
         $this->loadRoutesFrom( __DIR__ . '/../Routes/api.php' );
@@ -316,20 +328,4 @@ class NsSpecialCustomerServiceProvider extends ServiceProvider
         } );
     }
 
-    protected function runPermissionMigration(): void
-    {
-        $migrationPath = __DIR__ . '/../Migrations/2024_01_15_000001_create_special_customer_permissions.php';
-
-        if ( ! file_exists( $migrationPath ) ) {
-            return;
-        }
-
-        try {
-            $migration = require $migrationPath;
-            if ( $migration instanceof \Illuminate\Database\Migrations\Migration ) {
-                $migration->up();
-            }
-        } catch ( \Exception $e ) {
-        }
-    }
 }

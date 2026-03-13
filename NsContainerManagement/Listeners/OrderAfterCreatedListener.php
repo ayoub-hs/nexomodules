@@ -47,15 +47,21 @@ class OrderAfterCreatedListener
         }
 
         foreach ($products as $productData) {
-            // Respect manual toggle
-            $track = $productData['container_tracking_enabled'] ?? true;
+            // Track only when the client explicitly enables container tracking.
+            // Missing values must be treated as "off" to avoid accidental container moves.
+            $track = filter_var(
+                $productData['container_tracking_enabled'] ?? false,
+                FILTER_VALIDATE_BOOLEAN,
+                FILTER_NULL_ON_FAILURE
+            ) === true;
+
             if (!$track) {
                 continue;
             }
 
             // Check if product has linked container for its specific unit
             $containerInfo = $this->ledgerService->calculateContainersForProduct(
-                (int) ($productData['product_id'] ?? $productData['id']),
+                (int) ($productData['product_id'] ?? $productData['id'] ?? 0),
                 (float) $productData['quantity'],
                 (int) ($productData['unit_quantity_id'] ?? $productData['unit_id'] ?? null)
             );

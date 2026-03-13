@@ -1,8 +1,8 @@
 <?php
 
+use App\Classes\Schema;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -16,19 +16,19 @@ return new class extends Migration
             Schema::table('ns_customer_container_balances', function (Blueprint $table) {
                 // Add missing columns if they don't exist
                 if (!Schema::hasColumn('ns_customer_container_balances', 'balance')) {
-                    $table->integer('balance')->default(0)->after('container_type_id');
+                    $table->integer('balance')->default(0);
                 }
                 if (!Schema::hasColumn('ns_customer_container_balances', 'total_out')) {
-                    $table->integer('total_out')->default(0)->after('balance');
+                    $table->integer('total_out')->default(0);
                 }
                 if (!Schema::hasColumn('ns_customer_container_balances', 'total_in')) {
-                    $table->integer('total_in')->default(0)->after('total_out');
+                    $table->integer('total_in')->default(0);
                 }
                 if (!Schema::hasColumn('ns_customer_container_balances', 'total_charged')) {
-                    $table->integer('total_charged')->default(0)->after('total_in');
+                    $table->integer('total_charged')->default(0);
                 }
                 if (!Schema::hasColumn('ns_customer_container_balances', 'last_movement_at')) {
-                    $table->timestamp('last_movement_at')->nullable()->after('total_charged');
+                    $table->timestamp('last_movement_at')->nullable();
                 }
             });
         }
@@ -39,29 +39,9 @@ return new class extends Migration
      */
     public function down(): void
     {
-        if (Schema::hasTable('ns_customer_container_balances')) {
-            Schema::table('ns_customer_container_balances', function (Blueprint $table) {
-                // Only drop columns if they exist
-                $columns = [];
-                if (Schema::hasColumn('ns_customer_container_balances', 'balance')) {
-                    $columns[] = 'balance';
-                }
-                if (Schema::hasColumn('ns_customer_container_balances', 'total_out')) {
-                    $columns[] = 'total_out';
-                }
-                if (Schema::hasColumn('ns_customer_container_balances', 'total_in')) {
-                    $columns[] = 'total_in';
-                }
-                if (Schema::hasColumn('ns_customer_container_balances', 'total_charged')) {
-                    $columns[] = 'total_charged';
-                }
-                if (Schema::hasColumn('ns_customer_container_balances', 'last_movement_at')) {
-                    $columns[] = 'last_movement_at';
-                }
-                if (!empty($columns)) {
-                    $table->dropColumn($columns);
-                }
-            });
-        }
+        // Intentionally no-op:
+        // On fresh installs these columns are created by the base table migration.
+        // Dropping them here would corrupt rollback state for installations where this
+        // migration did not actually add anything.
     }
 };

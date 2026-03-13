@@ -9,6 +9,7 @@ use Modules\NsSpecialCustomer\Services\SpecialCustomerService;
 use Modules\NsSpecialCustomer\Services\WalletService;
 use App\Services\CustomerService;
 use App\Models\Customer;
+use Illuminate\Support\Facades\DB;
 use Modules\NsSpecialCustomer\Crud\CustomerTopupCrud;
 use Modules\NsSpecialCustomer\Http\Requests\ProcessTopupRequest;
 
@@ -30,8 +31,6 @@ class SpecialCustomerController extends Controller
      */
     public function getConfig(): JsonResponse
     {
-        $isTesting = app()->runningUnitTests() || app()->environment('testing') || strtolower((string) env('APP_ENV')) === 'testing';
-
         if (auth()->check()) {
             if (!ns()->allowedTo('special.customer.settings')) {
                 return response()->json([
@@ -71,28 +70,49 @@ class SpecialCustomerController extends Controller
                     'data' => [
                         'total_customers' => 0,
                         'total_balance' => 0,
+                        'total_due' => 0,
                         'pending_cashback' => 0
                     ]
                 ]);
             }
             
-            // Count special customers and their total balance
+            // Count special customers and their total wallet balance
             $customers = Customer::where('group_id', $groupId)->get();
             $totalCustomers = $customers->count();
             $totalBalance = $customers->sum('account_amount');
+            
+            // Calculate total due from unpaid/partially paid orders for special customers
+            // Using the same logic as SpecialCustomerCrud: SUM(total) - SUM(payments.value)
+            $customerIds = $customers->pluck('id');
+            
+            $totalDue = 0;
+            if ($customerIds->isNotEmpty()) {
+                // Get orders that are not fully paid (unpaid or partially_paid)
+                $unpaidOrders = \App\Models\Order::whereIn('customer_id', $customerIds)
+                    ->whereIn('payment_status', ['unpaid', 'partially_paid'])
+                    ->with('payments')
+                    ->get();
+                
+                // Calculate due for each order: total - payments sum
+                foreach ($unpaidOrders as $order) {
+                    $paidAmount = $order->payments->sum('value');
+                    $totalDue += ($order->total - $paidAmount);
+                }
+            }
             
             return response()->json([
                 'status' => 'success',
                 'data' => [
                     'total_customers' => $totalCustomers,
                     'total_balance' => $totalBalance,
+                    'total_due' => $totalDue,
                     'pending_cashback' => 0
                 ]
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => $e->getMessage()
+                'message' => __('Unable to load special customer statistics.')
             ], 500);
         }
     }
@@ -117,7 +137,7 @@ class SpecialCustomerController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => $e->getMessage()
+                'message' => __('Customer not found.')
             ], 404);
         }
     }
@@ -137,33 +157,46 @@ class SpecialCustomerController extends Controller
     {
         $payload = $request->getValidatedData();
 
+        // Read top-up metadata directly from validated payload
+        $description = $payload['description'] ?? null;
+        $receivedDate = $payload['received_date'] ?? now()->toDateString();
+
         try {
             $walletService = app(WalletService::class);
-            
+
             $result = $walletService->processTopup(
                 $payload['customer_id'],
                 $payload['amount'],
-                $payload['description'],
-                $payload['reference']
+                $description,
+                $payload['reference'],
+                $receivedDate
             );
 
             if ($result['success']) {
                 return response()->json([
                     'status' => 'success',
                     'message' => 'Account topped up successfully',
-                    'data' => $result
+                    'data' => [
+                        'success' => true,
+                        'transaction_id' => $result['transaction_id'] ?? null,
+                        'customer_id' => $payload['customer_id'],
+                        'amount' => $payload['amount'],
+                        'new_balance' => $result['new_balance'] ?? 0,
+                        'received_date' => $receivedDate,
+                        'created_at' => now()->toISOString(),
+                    ]
                 ]);
             } else {
                 return response()->json([
                     'status' => 'error',
                     'message' => $result['message']
-                ]);
+                ], 400);
             }
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => $e->getMessage()
-            ], 400);
+                'message' => __('Unable to process the top-up request.')
+            ], 500);
         }
     }
 
@@ -173,6 +206,13 @@ class SpecialCustomerController extends Controller
     public function getCustomerBalance(int $customerId): JsonResponse
     {
         try {
+            if (! Customer::query()->whereKey($customerId)->exists()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('Customer not found.'),
+                ], 404);
+            }
+
             $customer = $this->customerService->get($customerId);
             
             // Get account history
@@ -213,9 +253,28 @@ class SpecialCustomerController extends Controller
                 // Silently fail if orders relationship doesn't exist
             }
 
+            // Get last topup date and total topups count
+            $lastTopup = $customer->account_history()
+                ->where('operation', 'add')
+                ->orderBy('created_at', 'desc')
+                ->first();
+            
+            $totalTopups = $customer->account_history()
+                ->where('operation', 'add')
+                ->count();
+
+            // Build customer name
+            $customerName = trim($customer->first_name . ' ' . $customer->last_name);
+
             return response()->json([
                 'status' => 'success',
                 'data' => [
+                    'customer_id' => (int) $customer->id,
+                    'customer_name' => $customerName,
+                    'balance' => (float) $customer->account_amount,
+                    'last_topup_at' => $lastTopup?->created_at?->format('Y-m-d H:i:s'),
+                    'total_topups' => (int) $totalTopups,
+                    // Extended data for backward compatibility
                     'customer' => $customer,
                     'current_balance' => (float) $customer->account_amount,
                     'total_credited' => (float) $totalCredited,
@@ -224,11 +283,11 @@ class SpecialCustomerController extends Controller
                     'orders_paid_via_wallet' => $ordersPaidViaWallet
                 ]
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => $e->getMessage()
-            ], 404);
+                'message' => __('Unable to retrieve customer balance.')
+            ], 500);
         }
     }
 
@@ -264,7 +323,7 @@ class SpecialCustomerController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => $e->getMessage()
+                'message' => __('Unable to update special customer settings.')
             ], 400);
         }
     }
@@ -301,17 +360,24 @@ class SpecialCustomerController extends Controller
         try {
             $specialCustomerService = app(SpecialCustomerService::class);
             $config = $specialCustomerService->getConfig();
-            
+
+            $groupId = $config['groupId'] ?? null;
             $query = Customer::query()
                 ->select([
                     'id', 'first_name', 'last_name', 'email', 'phone',
                     'account_amount', 'group_id', 'created_at'
                 ])
-                ->with(['group:id,name,code']);
+                ->with(['group:id,name']);
+
+            if ($groupId) {
+                $query->where('group_id', $groupId);
+            } else {
+                $query->whereRaw('1 = 0');
+            }
 
             // Search functionality
             if ($request->has('search')) {
-                $search = $request->search;
+                $search = str_replace(['%', '_'], ['\%', '\_'], (string) $request->search);
                 $query->where(function($q) use ($search) {
                     $q->where('first_name', 'like', "%{$search}%")
                       ->orWhere('last_name', 'like', "%{$search}%")
@@ -339,12 +405,12 @@ class SpecialCustomerController extends Controller
             // Status filter
             if ($request->has('status_filter')) {
                 $statusFilter = $request->status_filter;
-                if ($statusFilter === 'special') {
-                    $query->where('group_id', $config['groupId']);
+                if ($statusFilter === 'special' && $groupId) {
+                    $query->where('group_id', $groupId);
                 } elseif ($statusFilter === 'regular') {
-                    $query->where(function($q) use ($config) {
+                    $query->where(function($q) use ($groupId) {
                         $q->whereNull('group_id')
-                          ->orWhere('group_id', '!=', $config['groupId']);
+                          ->orWhere('group_id', '!=', $groupId);
                     });
                 }
             }
@@ -360,21 +426,19 @@ class SpecialCustomerController extends Controller
             // Add special customer status and calculate purchases
             $customers->getCollection()->transform(function ($customer) use ($specialCustomerService) {
                 $customer->is_special = $specialCustomerService->isSpecialCustomer($customer);
-                
-                // Calculate total purchases (simplified - in real implementation you'd join with orders)
                 $customer->purchases_amount = $this->calculateCustomerPurchases($customer->id);
-                
+
                 return $customer;
             });
 
             return response()->json([
                 'status' => 'success',
-                'data' => $customers
+                'data' => $customers->toArray()
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => $e->getMessage()
+                'message' => __('Unable to load special customers.')
             ], 500);
         }
     }
@@ -384,12 +448,19 @@ class SpecialCustomerController extends Controller
      */
     private function calculateCustomerPurchases(int $customerId): float
     {
-        // Simplified calculation - in real implementation you'd query orders
         try {
-            // This is a placeholder - you would typically join with orders table
-            // For now, return 0 as we don't have the orders relationship set up
-            return 0.00;
-        } catch (\Exception $e) {
+            $totalPurchases = DB::table('nexopos_orders')
+                ->where('customer_id', $customerId)
+                ->where('payment_status', '!=', 'order_void')
+                ->sum('total');
+
+            $totalRefunds = DB::table('nexopos_orders_refunds')
+                ->join('nexopos_orders', 'nexopos_orders.id', '=', 'nexopos_orders_refunds.order_id')
+                ->where('nexopos_orders.customer_id', $customerId)
+                ->sum('nexopos_orders_refunds.total');
+
+            return max(0, (float) $totalPurchases - (float) $totalRefunds);
+        } catch (\Throwable $e) {
             return 0.00;
         }
     }
@@ -446,5 +517,75 @@ class SpecialCustomerController extends Controller
         }
         
         return view('NsSpecialCustomer::statistics');
+    }
+
+    /**
+     * Get wallet topups list for mobile app
+     */
+    public function getWalletTopups(Request $request): JsonResponse
+    {
+        try {
+            $customerId = $request->query('customer_id');
+            $limit = $request->query('limit', 50);
+            $offset = $request->query('offset', 0);
+
+            // Use CustomerAccountHistory model - topups are records with operation 'add'
+            $query = \App\Models\CustomerAccountHistory::query()
+                ->where('operation', 'add')
+                ->with(['customer:id,first_name,last_name,email'])
+                ->orderBy('created_at', 'desc');
+
+            if ($customerId) {
+                $query->where('customer_id', $customerId);
+            }
+
+            $total = $query->count();
+            $topups = $query->skip($offset)->take($limit)->get();
+
+            return response()->json([
+                'status' => 'success',
+                'data' => [
+                    'topups' => $topups,
+                    'total' => $total,
+                    'limit' => (int) $limit,
+                    'offset' => (int) $offset
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('Unable to retrieve wallet top-ups.')
+            ], 500);
+        }
+    }
+
+    /**
+     * Get single wallet topup details for mobile app
+     */
+    public function getWalletTopup(int $id): JsonResponse
+    {
+        try {
+            // Use CustomerAccountHistory model - topups are records with operation 'add'
+            $topup = \App\Models\CustomerAccountHistory::with(['customer:id,first_name,last_name,email'])
+                ->where('operation', 'add')
+                ->find($id);
+
+            if (!$topup) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Topup not found'
+                ], 404);
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $topup
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('Unable to retrieve the wallet top-up.')
+            ], 500);
+        }
     }
 }

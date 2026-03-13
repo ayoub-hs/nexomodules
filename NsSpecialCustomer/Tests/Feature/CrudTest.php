@@ -2,11 +2,13 @@
 
 namespace Modules\NsSpecialCustomer\Tests\Feature;
 
+use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 use App\Models\Customer;
 use App\Models\CustomerGroup;
 use Modules\NsSpecialCustomer\Services\SpecialCustomerService;
 use Modules\NsSpecialCustomer\Models\SpecialCashbackHistory;
+use Modules\TestSupport\Testing\ModuleTestDatabaseBootstrap;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
 
@@ -18,11 +20,23 @@ class CrudTest extends TestCase
 
     protected function setUp(): void
     {
+        putenv('AUTOLOAD_MODULES=NsSpecialCustomer');
         parent::setUp();
+        ModuleTestDatabaseBootstrap::prepare($this, 'modules/NsSpecialCustomer/Migrations');
+        $admin = \App\Models\User::where('username', 'admin')->first()
+            ?? \App\Models\User::factory()->create(['username' => 'admin']);
+        if (!$admin->attribute) {
+            $attribute = new \App\Models\UserAttribute(['language' => 'en']);
+            $attribute->user_id = $admin->id;
+            $attribute->save();
+            $admin->refresh();
+        }
+        $admin->assignRole('admin');
+        $this->actingAs($admin);
         $this->specialCustomerService = app(SpecialCustomerService::class);
     }
 
-    /** @test */
+    #[Test]
     public function special_cashback_crud_can_get_entries()
     {
         // Create test data
@@ -44,7 +58,7 @@ class CrudTest extends TestCase
         $this->assertArrayHasKey('data', $entries);
     }
 
-    /** @test */
+    #[Test]
     public function special_cashback_crud_can_create_entry()
     {
         // Create test data
@@ -69,14 +83,14 @@ class CrudTest extends TestCase
         $this->assertArrayHasKey('data', $result);
         
         // Verify record was created
-        $this->assertDatabaseHas('ns_special_cashback_history', [
+        $this->assertDatabaseHas('special_cashback_history', [
             'customer_id' => $customer->id,
             'year' => 2024,
             'total_purchases' => 1000.00
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function special_cashback_crud_can_get_single_entry()
     {
         // Create test data
@@ -96,7 +110,7 @@ class CrudTest extends TestCase
         $this->assertEquals($cashback->id, $result['data']['id']);
     }
 
-    /** @test */
+    #[Test]
     public function special_cashback_crud_can_update_entry()
     {
         // Create test data
@@ -122,14 +136,14 @@ class CrudTest extends TestCase
         $this->assertEquals('success', $result['status']);
         
         // Verify record was updated
-        $this->assertDatabaseHas('ns_special_cashback_history', [
+        $this->assertDatabaseHas('special_cashback_history', [
             'id' => $cashback->id,
             'total_purchases' => 1500.00,
             'description' => 'Updated description'
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function special_cashback_crud_can_delete_entry()
     {
         // Create test data
@@ -149,12 +163,12 @@ class CrudTest extends TestCase
         $this->assertEquals('success', $result['status']);
         
         // Verify record was deleted
-        $this->assertDatabaseMissing('ns_special_cashback_history', [
+        $this->assertDatabaseMissing('special_cashback_history', [
             'id' => $cashback->id
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function special_cashback_crud_prevents_updating_processed_entry()
     {
         // Create test data
@@ -179,7 +193,7 @@ class CrudTest extends TestCase
         $resource->updateEntry($cashback->id, $request);
     }
 
-    /** @test */
+    #[Test]
     public function special_cashback_crud_prevents_deleting_processed_entry()
     {
         // Create test data
@@ -200,7 +214,7 @@ class CrudTest extends TestCase
         $resource->deleteEntry($cashback->id);
     }
 
-    /** @test */
+    #[Test]
     public function special_cashback_crud_prevents_duplicate_entries()
     {
         // Create test data

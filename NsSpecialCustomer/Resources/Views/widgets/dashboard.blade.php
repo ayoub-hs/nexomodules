@@ -8,16 +8,22 @@
         </div>
         <div class="card-body">
             <div class="row">
-                <div class="col-6">
+                <div class="col-4">
                     <div class="stat-item">
                         <span class="stat-value" id="sc-customers-count">-</span>
                         <span class="stat-label">{{ __('Customers') }}</span>
                     </div>
                 </div>
-                <div class="col-6">
+                <div class="col-4">
                     <div class="stat-item">
                         <span class="stat-value" id="sc-balance-total">-</span>
-                        <span class="stat-label">{{ __('Total Balance') }}</span>
+                        <span class="stat-label">{{ __('Wallet') }}</span>
+                    </div>
+                </div>
+                <div class="col-4">
+                    <div class="stat-item">
+                        <span class="stat-value text-danger" id="sc-total-due">-</span>
+                        <span class="stat-label">{{ __('Total Due') }}</span>
                     </div>
                 </div>
             </div>
@@ -40,6 +46,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (data.status === 'success') {
                 document.getElementById('sc-customers-count').textContent = data.data.total_customers || 0;
                 document.getElementById('sc-balance-total').textContent = ns()->currency->define(data.data.total_balance || 0);
+                document.getElementById('sc-total-due').textContent = ns()->currency->define(data.data.total_due || 0);
             }
         })
         .catch(error => console.error('Error loading special customer stats:', error));

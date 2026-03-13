@@ -4,6 +4,7 @@ namespace Modules\NsSpecialCustomer\Services;
 
 use App\Models\Customer;
 use App\Models\CustomerAccountHistory;
+use App\Models\Order;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -63,18 +64,21 @@ class CashbackService implements CashbackServiceInterface
         $startDate = "{$year}-01-01 00:00:00";
         $endDate = "{$year}-12-31 23:59:59";
 
-        // Preferred: get purchases from paid orders minus refunded totals
+        // Preferred: use all orders for the customer/year (cashback applies regardless of
+        // paid/partially_paid/unpaid status), excluding only voided orders.
         $totalPurchases = DB::table('nexopos_orders')
             ->where('customer_id', $customerId)
             ->whereBetween('created_at', [$startDate, $endDate])
-            ->where('payment_status', 'paid')
+            ->whereNotIn('payment_status', [
+                Order::PAYMENT_VOID,
+            ])
             ->sum('total');
 
-        $totalRefunds = DB::table('nexopos_orders')
-            ->where('customer_id', $customerId)
-            ->whereBetween('created_at', [$startDate, $endDate])
-            ->whereIn('payment_status', ['refunded', 'partially_refunded'])
-            ->sum('total');
+        $totalRefunds = DB::table('nexopos_orders_refunds')
+            ->join('nexopos_orders', 'nexopos_orders.id', '=', 'nexopos_orders_refunds.order_id')
+            ->where('nexopos_orders.customer_id', $customerId)
+            ->whereBetween('nexopos_orders.created_at', [$startDate, $endDate])
+            ->sum('nexopos_orders_refunds.total');
 
         $netPurchases = max(0, $totalPurchases - $totalRefunds);
 
@@ -202,9 +206,9 @@ class CashbackService implements CashbackServiceInterface
      */
     public function processCashbackBatch(int $year, array $options = []): array
     {
-        $specialCustomers = $this->specialCustomerService->getSpecialCustomers([], 1000);
+        $groupId = $this->specialCustomerService->getSpecialGroupId();
         $results = [
-            'total_customers' => count($specialCustomers['data'] ?? []),
+            'total_customers' => 0,
             'processed' => 0,
             'failed' => 0,
             'skipped' => 0,
@@ -212,30 +216,43 @@ class CashbackService implements CashbackServiceInterface
             'errors' => [],
         ];
 
-        foreach ($specialCustomers['data'] ?? [] as $customer) {
-            try {
-                $result = $this->processCustomerCashback($customer['id'], $year);
+        if (! $groupId) {
+            return $results;
+        }
 
-                if ($result['success']) {
-                    $results['processed']++;
-                    $results['total_cashback'] += $result['cashback_amount'];
-                } else {
-                    $results['skipped']++;
+        $customerQuery = Customer::query()
+            ->where('group_id', $groupId)
+            ->select(['id', 'first_name', 'last_name'])
+            ->orderBy('id');
+
+        $results['total_customers'] = (clone $customerQuery)->count();
+
+        $customerQuery->chunkById(100, function ($customers) use (&$results, $year) {
+            foreach ($customers as $customer) {
+                try {
+                    $result = $this->processCustomerCashback($customer->id, $year);
+
+                    if ($result['success']) {
+                        $results['processed']++;
+                        $results['total_cashback'] += $result['cashback_amount'];
+                    } else {
+                        $results['skipped']++;
+                        $results['errors'][] = [
+                            'customer_id' => $customer->id,
+                            'customer_name' => trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? '')),
+                            'error' => $result['message'],
+                        ];
+                    }
+                } catch (\Exception $e) {
+                    $results['failed']++;
                     $results['errors'][] = [
-                        'customer_id' => $customer['id'],
-                        'customer_name' => ($customer['first_name'] ?? '') . ' ' . ($customer['last_name'] ?? ''),
-                        'error' => $result['message'],
+                        'customer_id' => $customer->id,
+                        'customer_name' => trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? '')),
+                        'error' => $e->getMessage(),
                     ];
                 }
-            } catch (\Exception $e) {
-                $results['failed']++;
-                $results['errors'][] = [
-                    'customer_id' => $customer['id'],
-                    'customer_name' => ($customer['first_name'] ?? '') . ' ' . ($customer['last_name'] ?? ''),
-                    'error' => $e->getMessage(),
-                ];
             }
-        }
+        });
 
         return $results;
     }

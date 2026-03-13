@@ -6,14 +6,10 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Add unique constraint to ns_special_cashback_history table
+ * Add unique constraint to special_cashback_history table
  *
- * This migration adds a unique constraint on customer_id + year columns
- * to prevent race conditions where duplicate cashback entries could be
- * created for the same customer and year.
- * 
- * Note: This migration is dated 2026 to ensure it runs after the initial table creation.
- * This is intentional and safe for fresh installs.
+ * Ensures one cashback entry per customer per year, preventing duplicate
+ * processing due to race conditions.
  */
 return new class extends Migration
 {
@@ -22,34 +18,31 @@ return new class extends Migration
      */
     public function up(): void
     {
-        if (!Schema::hasTable('ns_special_cashback_history')) {
+        // FIX: table name is 'special_cashback_history', NOT 'ns_special_cashback_history'
+        if (!Schema::hasTable('special_cashback_history')) {
             return;
         }
 
-        // Skip unique constraint on sqlite to avoid intermittent test collisions
+        // Skip unique constraint on sqlite (used in tests) to avoid intermittent collisions
         $driver = Schema::getConnection()->getDriverName();
         if ($driver === 'sqlite') {
             return;
         }
 
-        // Check if the unique constraint already exists
-        $uniqueExists = $this->indexExists('ns_special_cashback_history', 'ns_special_cashback_customer_year_unique');
-        
+        $uniqueExists = $this->indexExists('special_cashback_history', 'ns_special_cashback_customer_year_unique');
+
         if ($uniqueExists) {
-            return; // Already has unique constraint, nothing to do
+            return;
         }
 
-        // Check if the non-unique index exists and drop it
-        $indexExists = $this->indexExists('ns_special_cashback_history', 'ns_special_cashback_customer_year');
-        
-        if ($indexExists) {
-            Schema::table('ns_special_cashback_history', function (Blueprint $table) {
+        // Drop legacy non-unique index if present
+        if ($this->indexExists('special_cashback_history', 'ns_special_cashback_customer_year')) {
+            Schema::table('special_cashback_history', function (Blueprint $table) {
                 $table->dropIndex('ns_special_cashback_customer_year');
             });
         }
 
-        // Add unique constraint to prevent duplicate cashback entries
-        Schema::table('ns_special_cashback_history', function (Blueprint $table) {
+        Schema::table('special_cashback_history', function (Blueprint $table) {
             $table->unique(['customer_id', 'year'], 'ns_special_cashback_customer_year_unique');
         });
     }
@@ -59,54 +52,37 @@ return new class extends Migration
      */
     public function down(): void
     {
-        if (!Schema::hasTable('ns_special_cashback_history')) {
-            return;
-        }
-
-        // Check if the unique constraint exists
-        $uniqueExists = $this->indexExists('ns_special_cashback_history', 'ns_special_cashback_customer_year_unique');
-        
-        if ($uniqueExists) {
-            Schema::table('ns_special_cashback_history', function (Blueprint $table) {
-                $table->dropUnique('ns_special_cashback_customer_year_unique');
-            });
-        }
-
-        // Restore the non-unique index if it doesn't exist
-        $indexExists = $this->indexExists('ns_special_cashback_history', 'ns_special_cashback_customer_year');
-        
-        if (!$indexExists) {
-            Schema::table('ns_special_cashback_history', function (Blueprint $table) {
-                $table->index(['customer_id', 'year'], 'ns_special_cashback_customer_year');
-            });
-        }
+        // Intentionally no-op:
+        // this migration may be a no-op on fresh installs because the base table migration
+        // already creates the unique index. Reverting here would silently downgrade schema.
     }
 
     /**
-     * Check if an index exists on a table.
+     * Check whether a named index exists on a table.
      */
     private function indexExists(string $table, string $indexName): bool
     {
         $connection = Schema::getConnection();
-        $databaseName = $connection->getDatabaseName();
-        $driver = $connection->getDriverName();
+        $driver     = $connection->getDriverName();
 
-        if ($driver === 'mysql') {
-            $result = DB::select("SHOW INDEX FROM `{$table}` WHERE Key_name = ?", [$indexName]);
-            return count($result) > 0;
+        if ($driver === 'mysql' || $driver === 'mariadb') {
+            return count(DB::select("SHOW INDEX FROM `{$table}` WHERE Key_name = ?", [$indexName])) > 0;
         }
 
         if ($driver === 'pgsql') {
-            $result = DB::select("SELECT 1 FROM pg_indexes WHERE tablename = ? AND indexname = ?", [$table, $indexName]);
-            return count($result) > 0;
+            return count(DB::select(
+                "SELECT 1 FROM pg_indexes WHERE tablename = ? AND indexname = ?",
+                [$table, $indexName]
+            )) > 0;
         }
 
         if ($driver === 'sqlite') {
-            $result = DB::select("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?", [$indexName]);
-            return count($result) > 0;
+            return count(DB::select(
+                "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
+                [$indexName]
+            )) > 0;
         }
 
-        // For other drivers, assume index doesn't exist to be safe
         return false;
     }
 };

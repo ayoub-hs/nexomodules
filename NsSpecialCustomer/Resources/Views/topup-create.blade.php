@@ -4,7 +4,10 @@
 <div class="h-full flex flex-col flex-auto">
     @include(Hook::filter('ns-dashboard-header-file', '../common/dashboard-header'))
     <div class="px-4 flex-auto flex flex-col" id="dashboard-content">
-        @include('common.dashboard.title')
+        @include('common.dashboard.title', [
+            'title' => __('Customer Top-up'),
+            'description' => __('Process a wallet top-up for a special customer account.'),
+        ])
         <ns-crud-form 
             return-url="{{ url('/dashboard/special-customer/topup') }}"
             submit-url="{{ url('/api/crud/ns.special-customer-topup') }}"

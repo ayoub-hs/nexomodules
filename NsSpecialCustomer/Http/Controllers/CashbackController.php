@@ -188,6 +188,62 @@ class CashbackController extends Controller
     }
 
     /**
+     * Preview cashback totals for the selected customer/year without processing.
+     * Returns the remaining eligible totals after subtracting already processed/pending cashback records.
+     */
+    public function calculate(Request $request): JsonResponse
+    {
+        $request->validate([
+            'customer_id' => 'required|integer|exists:nexopos_users,id',
+            'year' => 'required|integer|min:2000|max:2100',
+        ]);
+
+        $customerId = $request->integer('customer_id');
+        $year = $request->integer('year');
+
+        $calculation = $this->cashbackService->calculateYearlyCashback($customerId, $year);
+
+        // Exclude cashback amounts already recorded for the same customer/year.
+        $alreadyCashedBack = SpecialCashbackHistory::query()
+            ->where('customer_id', $customerId)
+            ->where('year', $year)
+            ->whereIn('status', [
+                SpecialCashbackHistory::STATUS_PENDING,
+                SpecialCashbackHistory::STATUS_PROCESSED,
+            ])
+            ->selectRaw('COALESCE(SUM(total_purchases), 0) as total_purchases')
+            ->selectRaw('COALESCE(SUM(total_refunds), 0) as total_refunds')
+            ->selectRaw('COALESCE(SUM(cashback_amount), 0) as cashback_amount')
+            ->first();
+
+        $alreadyPurchases = (float) ($alreadyCashedBack?->total_purchases ?? 0);
+        $alreadyRefunds = (float) ($alreadyCashedBack?->total_refunds ?? 0);
+        $alreadyCashbackAmount = (float) ($alreadyCashedBack?->cashback_amount ?? 0);
+
+        $remainingPurchases = max(0, (float) ($calculation['total_purchases'] ?? 0) - $alreadyPurchases);
+        $remainingRefunds = max(0, (float) ($calculation['total_refunds'] ?? 0) - $alreadyRefunds);
+        $remainingCashbackAmount = max(0, (float) ($calculation['cashback_amount'] ?? 0) - $alreadyCashbackAmount);
+
+        $calculation['total_purchases'] = $remainingPurchases;
+        $calculation['total_refunds'] = $remainingRefunds;
+        $calculation['cashback_amount'] = round($remainingCashbackAmount, 2);
+        $calculation['already_cashed_back'] = [
+            'total_purchases' => $alreadyPurchases,
+            'total_refunds' => $alreadyRefunds,
+            'cashback_amount' => $alreadyCashbackAmount,
+        ];
+
+        if ($alreadyPurchases > 0 || $alreadyCashbackAmount > 0) {
+            $calculation['reason'] = __('Existing cashback records were excluded from the calculated totals.');
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $calculation,
+        ]);
+    }
+
+    /**
      * Get cashback summary for a customer
      */
     public function customerSummary(int $customerId): JsonResponse

@@ -2,6 +2,7 @@
 
 namespace Modules\NsSpecialCustomer\Tests\Feature;
 
+use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 use App\Models\User;
 use App\Models\Customer;
@@ -11,6 +12,7 @@ use App\Models\Role;
 use App\Services\Options;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\WithFaker;
+use Modules\TestSupport\Testing\ModuleTestDatabaseBootstrap;
 
 class SpecialCustomerControllerSecurityTest extends TestCase
 {
@@ -24,14 +26,28 @@ class SpecialCustomerControllerSecurityTest extends TestCase
 
     protected function setUp(): void
     {
+        putenv('AUTOLOAD_MODULES=NsSpecialCustomer');
         parent::setUp();
+        ModuleTestDatabaseBootstrap::prepare($this, 'modules/NsSpecialCustomer/Migrations');
         
         // Create admin user with all permissions
-        $this->admin = User::factory()->create();
+        $this->admin = User::factory()->create(['username' => 'admin_security']);
+        if (! $this->admin->attribute) {
+            $attribute = new \App\Models\UserAttribute(['language' => 'en']);
+            $attribute->user_id = $this->admin->id;
+            $attribute->save();
+            $this->admin->refresh();
+        }
         $this->admin->assignRole('admin');
         
         // Create regular user without special customer permissions
-        $this->regularUser = User::factory()->create();
+        $this->regularUser = User::factory()->create(['username' => 'regular_security']);
+        if (! $this->regularUser->attribute) {
+            $attribute = new \App\Models\UserAttribute(['language' => 'en']);
+            $attribute->user_id = $this->regularUser->id;
+            $attribute->save();
+            $this->regularUser->refresh();
+        }
         
         // Create special customer group
         $this->specialGroup = CustomerGroup::factory()->create([
@@ -53,6 +69,10 @@ class SpecialCustomerControllerSecurityTest extends TestCase
         
         // Create permissions
         $this->createPermissions();
+
+        // Flush cache and rate limiter
+        \Illuminate\Support\Facades\Cache::flush();
+        \Illuminate\Support\Facades\RateLimiter::clear('throttle'); // Clear global/shared throttle keys
     }
 
     protected function createPermissions(): void
@@ -76,7 +96,7 @@ class SpecialCustomerControllerSecurityTest extends TestCase
         }
     }
 
-    /** @test */
+    #[Test]
     public function admin_can_access_config_endpoint()
     {
         $this->actingAs($this->admin)
@@ -85,7 +105,7 @@ class SpecialCustomerControllerSecurityTest extends TestCase
             ->assertJsonStructure(['status', 'data']);
     }
 
-    /** @test */
+    #[Test]
     public function regular_user_cannot_access_config_endpoint()
     {
         $this->actingAs($this->regularUser)
@@ -93,14 +113,14 @@ class SpecialCustomerControllerSecurityTest extends TestCase
             ->assertStatus(403);
     }
 
-    /** @test */
+    #[Test]
     public function unauthenticated_user_cannot_access_config_endpoint()
     {
         $this->getJson('/api/special-customer/config')
             ->assertStatus(401);
     }
 
-    /** @test */
+    #[Test]
     public function admin_can_view_customer_balance()
     {
         $this->actingAs($this->admin)
@@ -118,7 +138,7 @@ class SpecialCustomerControllerSecurityTest extends TestCase
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function regular_user_cannot_view_customer_balance()
     {
         $this->actingAs($this->regularUser)
@@ -126,14 +146,14 @@ class SpecialCustomerControllerSecurityTest extends TestCase
             ->assertStatus(403);
     }
 
-    /** @test */
+    #[Test]
     public function unauthenticated_user_cannot_view_customer_balance()
     {
         $this->getJson('/api/special-customer/balance/' . $this->specialCustomer->id)
             ->assertStatus(401);
     }
 
-    /** @test */
+    #[Test]
     public function admin_can_view_customer_list()
     {
         $this->actingAs($this->admin)
@@ -150,7 +170,7 @@ class SpecialCustomerControllerSecurityTest extends TestCase
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function regular_user_cannot_view_customer_list()
     {
         $this->actingAs($this->regularUser)
@@ -158,7 +178,7 @@ class SpecialCustomerControllerSecurityTest extends TestCase
             ->assertStatus(403);
     }
 
-    /** @test */
+    #[Test]
     public function admin_can_check_customer_special_status()
     {
         $this->actingAs($this->admin)
@@ -173,7 +193,7 @@ class SpecialCustomerControllerSecurityTest extends TestCase
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function admin_can_process_topup()
     {
         $this->actingAs($this->admin)
@@ -194,7 +214,7 @@ class SpecialCustomerControllerSecurityTest extends TestCase
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function regular_user_cannot_process_topup()
     {
         $this->actingAs($this->regularUser)
@@ -206,7 +226,7 @@ class SpecialCustomerControllerSecurityTest extends TestCase
             ->assertStatus(403);
     }
 
-    /** @test */
+    #[Test]
     public function topup_validates_amount()
     {
         $this->actingAs($this->admin)
@@ -218,7 +238,7 @@ class SpecialCustomerControllerSecurityTest extends TestCase
             ->assertStatus(422);
     }
 
-    /** @test */
+    #[Test]
     public function topup_validates_customer_exists()
     {
         $this->actingAs($this->admin)
@@ -230,7 +250,7 @@ class SpecialCustomerControllerSecurityTest extends TestCase
             ->assertStatus(422);
     }
 
-    /** @test */
+    #[Test]
     public function rate_limiting_applies_to_topup()
     {
         $this->actingAs($this->admin);
@@ -255,7 +275,7 @@ class SpecialCustomerControllerSecurityTest extends TestCase
         $this->assertEquals(429, $response->getStatusCode());
     }
 
-    /** @test */
+    #[Test]
     public function rate_limiting_applies_to_cashback_process()
     {
         $this->actingAs($this->admin);
@@ -283,7 +303,7 @@ class SpecialCustomerControllerSecurityTest extends TestCase
         $this->assertEquals(429, $response->getStatusCode());
     }
 
-    /** @test */
+    #[Test]
     public function admin_can_access_crud_special_customers()
     {
         $this->actingAs($this->admin)
@@ -297,7 +317,7 @@ class SpecialCustomerControllerSecurityTest extends TestCase
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function admin_can_access_crud_cashback()
     {
         $this->actingAs($this->admin)
@@ -311,7 +331,7 @@ class SpecialCustomerControllerSecurityTest extends TestCase
             ]);
     }
 
-    /** @test */
+    #[Test]
     public function admin_can_access_crud_topup()
     {
         $this->actingAs($this->admin)
@@ -325,4 +345,3 @@ class SpecialCustomerControllerSecurityTest extends TestCase
             ]);
     }
 }
-

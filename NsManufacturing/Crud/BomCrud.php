@@ -25,6 +25,9 @@ class BomCrud extends CrudService
     protected $namespace = 'ns.manufacturing-boms';
 
     protected $prependOptions = true;
+    protected $listWhere = [
+        'ns_manufacturing_boms.deleted_at' => null,
+    ];
 
     protected $permissions = [
         'create' => 'nexopos.create.manufacturing-recipes',
@@ -103,8 +106,10 @@ class BomCrud extends CrudService
 
     public function setActions(CrudEntry $entry): CrudEntry
     {
-        $bom = ManufacturingBom::find($entry->id);
-        $cost = app()->make(\Modules\NsManufacturing\Services\BomService::class)->calculateEstimatedCost($bom);
+        $bom = ManufacturingBom::withTrashed()->find($entry->id);
+        $cost = $bom
+            ? app()->make(\Modules\NsManufacturing\Services\BomService::class)->calculateEstimatedCost($bom)
+            : 0;
         
         $entry->estimated_cost = ns()->currency->define($cost)->format();
         $entry->quantity = $this->formatNumber($entry->quantity);

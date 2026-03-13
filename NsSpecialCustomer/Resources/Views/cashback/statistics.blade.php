@@ -99,7 +99,7 @@
 </div>
 @endsection
 
-@section('layout.dashboard.footer.js')
+@section('layout.dashboard.footer.inject')
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     loadStatistics();

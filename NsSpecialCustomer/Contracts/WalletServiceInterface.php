@@ -22,7 +22,13 @@ interface WalletServiceInterface
      * @throws \Modules\NsSpecialCustomer\Exceptions\InvalidTopupAmountException
      * @throws \Modules\NsSpecialCustomer\Exceptions\InsufficientBalanceException
      */
-    public function processTopup(int $customerId, float $amount, string $description, string $reference = 'ns_special_topup'): array;
+    public function processTopup(
+        int $customerId,
+        float $amount,
+        string $description,
+        string $reference = 'ns_special_topup',
+        ?string $receivedDate = null
+    ): array;
 
     /**
      * Get customer balance with caching.

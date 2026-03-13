@@ -150,8 +150,11 @@ document.addEventListener( 'DOMContentLoaded', () => {
             }
         });
 
+        const containerErrorsShown = new Set();
+
         const updateContainerLabels = ( products ) => {
             const options = POS.options.value;
+            
             if ( ! options || ! options.container_management || ! options.container_management.links ) {
                 return;
             }
@@ -159,14 +162,35 @@ document.addEventListener( 'DOMContentLoaded', () => {
             const links = options.container_management.links;
 
             products.forEach( p => {
-                const productId = parseInt( p.product_id || p.product.id );
-                const unitId = parseInt( p.unit_quantity_id || p.unit_id );
+                const productId = parseInt( p.product_id || p.product?.id );
+                const unitQuantityId = parseInt( p.unit_quantity_id );
                 
-                let link = links.find( l => l.product_id === productId && l.unit_id === unitId );
-                if ( ! link && unitId ) {
-                    link = links.find( l => l.product_id === productId && ( l.unit_id === null || l.unit_id === undefined ) );
+                // Require exact match (product_id + unit_quantity_id)
+                let link = null;
+                
+                if (unitQuantityId) {
+                    link = links.find( l => parseInt( l.product_id ) === productId && parseInt( l.unit_quantity_id ) === unitQuantityId );
                 }
 
+                // Only show error if there's a broken link (has this product_id but NULL unit_quantity_id)
+                if ( !link ) {
+                    const brokenLink = links.find( l => parseInt( l.product_id ) === productId && ( !l.unit_quantity_id || l.unit_quantity_id === null ) );
+                    if ( brokenLink ) {
+                        const errorKey = `${productId}`;
+                        if ( !containerErrorsShown.has( errorKey ) ) {
+                            containerErrorsShown.add( errorKey );
+                            const productName = p.name || 'Unknown Product';
+                            if ( typeof nsSnackBar !== 'undefined' ) {
+                                nsSnackBar.error(
+                                    `Container link misconfigured for "${productName}". Please re-save the product in the dashboard to fix the container link.`,
+                                    'OK',
+                                    { duration: 6000 }
+                                );
+                            }
+                        }
+                    }
+                }
+                
                 if ( link ) {
                     p.container_type = {
                         id: link.container_type_id,
@@ -175,8 +199,9 @@ document.addEventListener( 'DOMContentLoaded', () => {
                     
                     p.container_quantity = Math.floor( parseFloat( p.quantity ) / parseFloat( link.capacity ) );
                     
+                    // Enable container tracking by default if not set (default: false - user must opt-in)
                     if ( p.container_tracking_enabled === undefined ) {
-                        p.container_tracking_enabled = false;
+                        p.container_tracking_enabled = false;  // Disabled by default - user must enable manually
                     }
 
                     // CAUTION: Modifying p.name might trigger reactive loops if not careful.
@@ -205,18 +230,83 @@ document.addEventListener( 'DOMContentLoaded', () => {
         let injectionTimeout = null;
 
         const injectContainerToggle = () => {
-            const productOptions = document.querySelectorAll('.product-item .product-options');
-            productOptions.forEach( ( container ) => {
-                const productItem = container.closest( '.product-item' );
-                if ( ! productItem ) return;
+            // Try multiple selectors to find product options container
+            const selectors = [
+                '.product-item .product-options',
+                '.product-item .product-quick-actions',
+                '.product-item .product-action',
+                '.product-item .product-actions',
+                '.ns-product-card .product-options',
+                '[class*="product-item"] [class*="options"]',
+                '[class*="product-card"] [class*="action"]',
+                '.pos-grid-item',
+                '.ns-pos-product',
+            ];
+            
+            let productOptions = null;
+            
+            for (const selector of selectors) {
+                try {
+                    const found = document.querySelectorAll(selector);
+                    if (found.length > 0) {
+                        productOptions = found;
+                        break;
+                    }
+                } catch(e) {
+                    // Skip invalid selectors
+                }
+            }
+            
+            if (!productOptions || productOptions.length === 0) {
+                return;
+            }
+            
+            productOptions.forEach( ( container, containerIndex ) => {
+                // Try multiple ways to find product index
+                let index = null;
+                let productItem = null;
                 
-                const index = parseInt( productItem.getAttribute( 'product-index' ) );
+                // First try closest .product-item
+                const closestProductItem = container.closest('.product-item');
+                if (closestProductItem) {
+                    productItem = closestProductItem;
+                    index = parseInt(closestProductItem.getAttribute('product-index'));
+                }
+                
+                // If no index found, try other selectors
+                if (index === null || isNaN(index)) {
+                    const possibleProductSelectors = [
+                        '[product-index]',
+                        '[data-product-index]',
+                        '.product-item',
+                        '[class*="product"]',
+                    ];
+                    for (const sel of possibleProductSelectors) {
+                        const el = container.closest(sel);
+                        if (el) {
+                            const attrIndex = el.getAttribute('product-index') || el.getAttribute('data-product-index');
+                            if (attrIndex !== null) {
+                                index = parseInt(attrIndex);
+                                productItem = el;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                // Fallback to using container index
+                if (index === null || isNaN(index)) {
+                    index = containerIndex;
+                }
+                
+                if (index === null) return;
+                
                 const products = POS.products.getValue();
                 const product = products[index];
 
                 if ( ! product || ! product.container_type ) {
                     const existing = container.querySelector( '.ns-container-toggle' );
-                    if (existing) existing.remove();
+                    if(existing) existing.remove();
                     return;
                 }
 
@@ -227,11 +317,18 @@ document.addEventListener( 'DOMContentLoaded', () => {
                     const a = document.createElement( 'a' );
                     toggleDiv.appendChild( a );
                     
+                    // Try to insert after wholesale toggle, otherwise append to container
                     const wholesaleToggle = container.querySelector( 'i.la-award' )?.closest( '.px-1' );
-                    if ( wholesaleToggle ) {
+                    if ( wholesaleToggle && wholesaleToggle.parentNode ) {
                         wholesaleToggle.parentNode.insertBefore( toggleDiv, wholesaleToggle.nextSibling );
                     } else {
-                        container.appendChild( toggleDiv );
+                        // Try to find any action button to insert before
+                        const actionButton = container.querySelector('button, a.btn, [class*="btn"]');
+                        if (actionButton && actionButton.parentNode) {
+                            actionButton.parentNode.insertBefore(toggleDiv, actionButton);
+                        } else {
+                            container.appendChild( toggleDiv );
+                        }
                     }
                 }
 

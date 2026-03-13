@@ -9,6 +9,7 @@ use App\Models\Order;
 use App\Services\CrudEntry;
 use App\Services\CrudService;
 use Illuminate\Http\Request;
+use Modules\NsSpecialCustomer\Crud\Concerns\AppliesCrudEntryCasts;
 use Modules\NsSpecialCustomer\Services\OutstandingTicketPaymentService;
 use Modules\NsSpecialCustomer\Services\SpecialCustomerService;
 
@@ -20,6 +21,8 @@ use Modules\NsSpecialCustomer\Services\SpecialCustomerService;
  */
 class OutstandingTicketCrud extends CrudService
 {
+    use AppliesCrudEntryCasts;
+
     const IDENTIFIER = 'ns.outstanding-tickets';
 
     const AUTOLOAD = true;
@@ -73,6 +76,7 @@ class OutstandingTicketCrud extends CrudService
                 'label' => __( 'Customer' ),
                 'width' => '200px',
                 'filter' => 'like',
+                '$sort' => false,
             ],
             'created_at' => [
                 'label' => __( 'Date' ),
@@ -86,11 +90,13 @@ class OutstandingTicketCrud extends CrudService
             'paid_amount' => [
                 'label' => __( 'Paid' ),
                 'width' => '120px',
+                '$sort' => false,
             ],
             'due_amount' => [
                 'label' => __( 'Due' ),
                 'width' => '120px',
                 '$direction' => 'desc',
+                '$sort' => false,
             ],
             'payment_status' => [
                 'label' => __( 'Status' ),
@@ -140,15 +146,36 @@ class OutstandingTicketCrud extends CrudService
             }
         }
 
-        // Apply ordering
-        $query->orderBy(
-            $config['order_by'] ?? 'created_at',
-            $config['direction'] ?? 'desc'
+        // Apply ordering using the same query params emitted by <ns-crud>.
+        $requestedSortColumn = $config['order_by']
+            ?? request()->query( 'active' )
+            ?? 'created_at';
+        $requestedDirection = strtolower(
+            (string) ( $config['direction']
+                ?? request()->query( 'direction' )
+                ?? 'desc' )
         );
 
+        $sortableColumns = [
+            'id',
+            'code',
+            'created_at',
+            'total',
+            'payment_status',
+        ];
+
+        $sortColumn = in_array( $requestedSortColumn, $sortableColumns, true )
+            ? $requestedSortColumn
+            : 'created_at';
+        $sortDirection = in_array( $requestedDirection, [ 'asc', 'desc' ], true )
+            ? $requestedDirection
+            : 'desc';
+
+        $query->orderBy( $sortColumn, $sortDirection );
+
         // Handle pagination
-        $perPage = $config['per_page'] ?? 25;
-        $page = $config['page'] ?? 1;
+        $perPage = max( 0, (int) ( $config['per_page'] ?? request()->query( 'per_page', 25 ) ) );
+        $page = max( 1, (int) ( $config['page'] ?? request()->query( 'page', 1 ) ) );
 
         if ( $perPage > 0 ) {
             $entries = $query->paginate( $perPage, ['*'], 'page', $page );
@@ -195,7 +222,7 @@ class OutstandingTicketCrud extends CrudService
             $entryArray['paid_amount'] = $paidAmount;
             $entryArray['due_amount'] = $dueAmount;
 
-            $crudEntry = new CrudEntry( $entryArray );
+            $crudEntry = $this->applyCrudEntryCasts( new CrudEntry( $entryArray ) );
 
             // Format currency fields
             $crudEntry->formatted_total = ns()->currency->define( $entry->total );
@@ -214,8 +241,9 @@ class OutstandingTicketCrud extends CrudService
         // Update pagination info
         $result['total'] = $entries instanceof \Illuminate\Pagination\LengthAwarePaginator ? $entries->total() : count( $entries );
         $result['per_page'] = $perPage;
-        $result['current_page'] = $page;
+        $result['current_page'] = $entries instanceof \Illuminate\Pagination\LengthAwarePaginator ? $entries->currentPage() : $page;
         $result['last_page'] = $entries instanceof \Illuminate\Pagination\LengthAwarePaginator ? $entries->lastPage() : 1;
+        $result['first_page'] = 1;
 
         return $result;
     }

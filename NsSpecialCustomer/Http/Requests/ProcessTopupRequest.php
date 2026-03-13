@@ -5,7 +5,6 @@ namespace Modules\NsSpecialCustomer\Http\Requests;
 use App\Models\Customer;
 use App\Models\CustomerAccountHistory;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Support\Facades\Auth;
 
 /**
  * Process Topup Request Validation
@@ -20,7 +19,12 @@ class ProcessTopupRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return Auth::check() && ns()->allowedTo('special.customer.topup');
+        if (! $this->user()) {
+            return false;
+        }
+
+        return ns()->allowedTo('special.customer.manage')
+            || ns()->allowedTo('special.customer.topup');
     }
 
     /**
@@ -43,10 +47,19 @@ class ProcessTopupRequest extends FormRequest
                 'min:' . $minAmount,
                 'max:' . $maxAmount,
             ],
+            'payment_method' => [
+                'nullable',
+                'string',
+                'max:255',
+            ],
             'description' => [
                 'nullable',
                 'string',
                 'max:255',
+            ],
+            'received_date' => [
+                'nullable',
+                'date',
             ],
             'reference' => [
                 'nullable',
@@ -73,6 +86,7 @@ class ProcessTopupRequest extends FormRequest
             'amount.min' => __('The minimum top-up amount is :min.', ['min' => ns()->currency->define($minAmount)->format()]),
             'amount.max' => __('The maximum top-up amount is :max.', ['max' => ns()->currency->define($maxAmount)->format()]),
             'description.max' => __('The description must not exceed 255 characters.'),
+            'received_date.date' => __('The received date must be a valid date.'),
             'reference.max' => __('The reference must not exceed 100 characters.'),
         ];
     }
@@ -86,6 +100,7 @@ class ProcessTopupRequest extends FormRequest
             'customer_id' => __('customer'),
             'amount' => __('top-up amount'),
             'description' => __('description'),
+            'received_date' => __('received date'),
             'reference' => __('reference'),
         ];
     }
@@ -157,6 +172,9 @@ class ProcessTopupRequest extends FormRequest
 
         // Set defaults
         $data['description'] = $data['description'] ?? __('Special customer top-up');
+        $data['received_date'] = !empty($data['received_date'])
+            ? (string) $data['received_date']
+            : now()->toDateString();
         $data['reference'] = $data['reference'] ?? 'ns_special_topup';
 
         return $data;

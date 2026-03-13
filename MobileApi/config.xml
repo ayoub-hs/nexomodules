@@ -1,10 +1,16 @@
-<?xml version="1.0" ?>
+<?xml version="1.0" encoding="UTF-8"?>
 <module>
     <namespace>MobileApi</namespace>
     <version>1.0</version>
     <author>NexoPOS Developer</author>
-    <name>Mobile API Module</name>
+    <n>Mobile API Module</n>
     <description>
         <locale lang="en">Provides API endpoints for mobile app integration including sync, products, categories, orders, and register configuration.</locale>
     </description>
+    <core>
+        <min-version>6.0.0</min-version>
+    </core>
+    <providers>
+        <provider>Modules\MobileApi\Providers\MobileApiServiceProvider</provider>
+    </providers>
 </module>

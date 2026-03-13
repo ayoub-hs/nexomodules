@@ -9,11 +9,15 @@ use App\Models\Customer;
 use App\Classes\CrudForm;
 use App\Classes\FormInput;
 use App\Services\Helper;
+use Modules\NsContainerManagement\Services\ContainerLedgerService;
 use TorMorten\Eventy\Facades\Events as Hook;
 
 class ReceiveContainerCrud extends CrudService
 {
     const IDENTIFIER = 'ns.container-receive';
+
+    public $disablePost = true;
+    public $disablePut = true;
 
     protected $table = 'ns_container_movements';
     protected $model = ContainerMovement::class;
@@ -116,7 +120,7 @@ class ReceiveContainerCrud extends CrudService
 
     public function filterPutInputs($inputs, $entry)
     {
-        return $this->sanitizeInputs($inputs);
+        throw new \Exception(__('Updating receive records is not supported. Create a correction movement instead.'));
     }
 
     private function sanitizeInputs($inputs)
@@ -124,17 +128,39 @@ class ReceiveContainerCrud extends CrudService
         if (is_array($inputs)) {
             unset($inputs['undefined']);
             $inputs['author'] = auth()->id() ?? 0;
+            $inputs['direction'] = ContainerMovement::DIRECTION_IN;
+            $inputs['source_type'] = ContainerMovement::SOURCE_MANUAL_RETURN;
         }
         return $inputs;
     }
 
-    public function beforePost($request)
+    public function beforePost($request, $entry = null, $inputs = null)
     {
         return $request;
     }
 
-    public function afterPost($request, $entry)
+    public function afterPost($request, $entry, $inputs = null)
     {
+        $payload = is_array($inputs) ? $inputs : (is_array($request) ? $request : []);
+
+        $movement = app(ContainerLedgerService::class)->recordContainerIn(
+            customerId: (int) ($payload['customer_id'] ?? 0),
+            containerTypeId: (int) ($payload['container_type_id'] ?? 0),
+            quantity: (int) ($payload['quantity'] ?? 0),
+            sourceType: ContainerMovement::SOURCE_MANUAL_RETURN,
+            note: $payload['note'] ?? null
+        );
+
+        // Populate the unsaved CRUD entry used by CrudService response payload.
+        $entry->forceFill($movement->getAttributes());
+        $entry->exists = true;
+        $entry->wasRecentlyCreated = true;
+
         return $request;
+    }
+
+    public function beforePut($request, $entry = null, $inputs = null)
+    {
+        throw new \Exception(__('Updating receive records is not supported. Create a correction movement instead.'));
     }
 }

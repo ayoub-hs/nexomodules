@@ -72,31 +72,55 @@ class ContainerService
 
     /**
      * Link product to a container type
+     *
+     * @param int      $productId       The product ID
+     * @param int      $containerTypeId The container type ID
+     * @param int|null $unitQuantityId  The unit quantity ID (from products_unit_quantities table)
+     * @param int|null $unitId          The unit ID (from units table) – kept for reference
      */
-    public function linkProductToContainer(int $productId, int $containerTypeId, ?int $unitId = null): ProductContainer
+    public function linkProductToContainer(int $productId, int $containerTypeId, ?int $unitQuantityId = null, ?int $unitId = null): ProductContainer
     {
-        return ProductContainer::updateOrCreate(
-            [
-                'product_id' => $productId,
-                'unit_id' => $unitId,
-            ],
-            [
-                'container_type_id' => $containerTypeId,
-                'is_enabled' => true,
-            ]
-        );
+        // Safety-net: resolve unit_quantity_id from unit_id if missing
+        if ($unitQuantityId === null && $unitId !== null) {
+            $unitQuantity = \App\Models\ProductUnitQuantity::where('product_id', $productId)
+                ->where('unit_id', $unitId)
+                ->first();
+            if ($unitQuantity) {
+                $unitQuantityId = $unitQuantity->id;
+            }
+        }
+
+        // Match on product + unit_quantity — this is what the unique index is based on.
+        // container_type_id goes into the UPDATE payload, not the match criteria.
+        $matchCriteria = ['product_id' => $productId];
+        if ($unitQuantityId !== null) {
+            $matchCriteria['unit_quantity_id'] = $unitQuantityId;
+        } elseif ($unitId !== null) {
+            $matchCriteria['unit_id'] = $unitId;
+        }
+
+        $updateData = [
+            'container_type_id' => $containerTypeId,
+            'unit_id'           => $unitId,
+            'unit_quantity_id'  => $unitQuantityId,
+            'is_enabled'        => true,
+        ];
+
+        return ProductContainer::updateOrCreate($matchCriteria, $updateData);
     }
 
     /**
      * Unlink product from containers
+     * Handles backward compatibility for fresh installs without unit_quantity_id column
      */
-    public function unlinkProductFromContainer(int $productId, ?int $unitId = null): bool
+    public function unlinkProductFromContainer(int $productId, ?int $unitQuantityId = null): bool
     {
         $query = ProductContainer::where('product_id', $productId);
-        if ($unitId === null) {
-            $query->whereNull('unit_id');
+
+        if ($unitQuantityId === null) {
+            $query->whereNull('unit_quantity_id');
         } else {
-            $query->where('unit_id', $unitId);
+            $query->where('unit_quantity_id', $unitQuantityId);
         }
 
         $deleted = $query->delete();
@@ -104,34 +128,57 @@ class ContainerService
     }
 
     /**
-     * Get container linked to a product (with unit fallback)
+     * Get container linked to a specific product unit
      */
-    public function getProductContainer(int $productId, ?int $unitId = null): ?ProductContainer
+    public function getProductContainer(int $productId, ?int $unitQuantityId = null): ?ProductContainer
     {
-        $link = ProductContainer::where('product_id', $productId)
-            ->where('unit_id', $unitId)
+        return ProductContainer::where('product_id', $productId)
+            ->where('unit_quantity_id', $unitQuantityId)
             ->first();
-
-        if (!$link && $unitId !== null) {
-            $link = ProductContainer::where('product_id', $productId)
-                ->whereNull('unit_id')
-                ->first();
-        }
-
-        return $link;
     }
 
     /**
-     * Get all active product container links for POS optimization
+     * Get all active product container links for POS optimisation
      */
     public function getAllProductContainerLinks(): Collection
     {
         return ProductContainer::with('containerType')
             ->where('is_enabled', true)
             ->get()
-            ->map(function($link) {
+            ->map(function ($link) {
+                return [
+                    'product_id'         => $link->product_id,
+                    'unit_quantity_id'   => $link->unit_quantity_id,
+                    'unit_id'            => $link->unit_id,
+                    'container_type_id'  => $link->container_type_id,
+                    'container_type_name'=> $link->containerType->name,
+                    'capacity'           => $link->containerType->capacity,
+                    'capacity_unit'      => $link->containerType->capacity_unit,
+                    'deposit_fee'        => $link->containerType->deposit_fee,
+                ];
+            });
+    }
+
+    public function getProductContainerLinksForProducts(iterable $productIds): Collection
+    {
+        $ids = collect($productIds)
+            ->filter(fn ($id) => $id !== null && $id !== '')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($ids->isEmpty()) {
+            return collect();
+        }
+
+        return ProductContainer::with('containerType')
+            ->where('is_enabled', true)
+            ->whereIn('product_id', $ids)
+            ->get()
+            ->map(function ($link) {
                 return [
                     'product_id' => $link->product_id,
+                    'unit_quantity_id' => $link->unit_quantity_id,
                     'unit_id' => $link->unit_id,
                     'container_type_id' => $link->container_type_id,
                     'container_type_name' => $link->containerType->name,

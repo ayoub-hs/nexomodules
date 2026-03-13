@@ -64,10 +64,10 @@ class OutstandingTicketPaymentService
                 );
             }
 
+            // Omit register_id to bypass register check for remote payments
             $payment = [
                 'identifier' => OrderPayment::PAYMENT_ACCOUNT,
                 'value' => $paymentAmount,
-                'register_id' => $order->register_id,
             ];
 
             $this->ordersService->makeOrderSinglePayment($payment, $order);

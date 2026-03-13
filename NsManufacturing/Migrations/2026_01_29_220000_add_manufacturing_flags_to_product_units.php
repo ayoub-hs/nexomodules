@@ -21,10 +21,10 @@ return new class extends Migration
             Schema::table('nexopos_products_unit_quantities', function (Blueprint $table) {
                 // Only add columns if they don't exist
                 if (!Schema::hasColumn('nexopos_products_unit_quantities', 'is_manufactured')) {
-                    $table->boolean('is_manufactured')->default(false)->after('visible');
+                    $table->boolean('is_manufactured')->default(false);
                 }
                 if (!Schema::hasColumn('nexopos_products_unit_quantities', 'is_raw_material')) {
-                    $table->boolean('is_raw_material')->default(false)->after('is_manufactured');
+                    $table->boolean('is_raw_material')->default(false);
                 }
                 
                 // Note: Indexes are optional and only needed for performance on large datasets

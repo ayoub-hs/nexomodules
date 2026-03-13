@@ -5,6 +5,7 @@ namespace Modules\MobileApi\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Services\OrdersService;
+use Illuminate\Support\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -36,8 +37,15 @@ class MobileOrdersController extends Controller
         $cursor = $request->input('cursor');
         $customerFilter = $request->input('customer');
         $paymentStatus = $request->input('payment_status');
-        $since = $request->input('since');
+        $sinceInput = $request->input('since');
         $direction = $request->input('direction', 'before');
+        $since = $sinceInput ? $this->normalizeSince($sinceInput) : null;
+
+        if ($sinceInput && $since === null) {
+            return response()->json([
+                'error' => 'Invalid "since" parameter',
+            ], 400);
+        }
 
         $query = Order::with(['customer:id,first_name,last_name,email,phone', 'products'])
             ->select([
@@ -123,6 +131,8 @@ class MobileOrdersController extends Controller
                 'next_cursor' => $hasMore ? $nextCursor : null,
                 'prev_cursor' => $prevCursor,
                 'limit' => $limit,
+                'count' => $transformedOrders->count(),
+                'server_time' => now()->format('Y-m-d H:i:s'),
             ],
         ]);
     }
@@ -133,13 +143,13 @@ class MobileOrdersController extends Controller
      * @param Order $order
      * @return \Illuminate\Http\JsonResponse
      */
-    public function show(Order $order)
+    public function show(int $order)
     {
-        $order->load([
+        $order = Order::with([
             'customer:id,first_name,last_name,email,phone',
             'products',
             'payments',
-        ]);
+        ])->findOrFail($order);
 
         return response()->json([
             'data' => $this->transformOrder($order, true),
@@ -155,16 +165,25 @@ class MobileOrdersController extends Controller
      */
     public function sync(Request $request)
     {
-        $since = $request->input('since');
+        $sinceInput = $request->input('since');
         $limit = min((int) $request->input('limit', 50), 200);
+        $cursor = $request->input('cursor');
 
-        if (!$since) {
+        if (!$sinceInput) {
             return response()->json([
                 'error' => 'The "since" parameter is required',
             ], 400);
         }
 
-        $orders = Order::with(['customer:id,first_name,last_name,email,phone', 'products'])
+        $since = $this->normalizeSince($sinceInput);
+
+        if ($since === null) {
+            return response()->json([
+                'error' => 'Invalid "since" parameter',
+            ], 400);
+        }
+
+        $query = Order::with(['customer:id,first_name,last_name,email,phone', 'products'])
             ->select([
                 'id',
                 'code',
@@ -183,7 +202,13 @@ class MobileOrdersController extends Controller
                 'updated_at',
             ])
             ->where('updated_at', '>=', $since)
-            ->orderBy('updated_at', 'asc')
+            ->orderBy('id', 'asc');
+
+        if ($cursor) {
+            $query->where('id', '>', $cursor);
+        }
+
+        $orders = $query
             ->limit($limit + 1)
             ->get();
 
@@ -196,16 +221,59 @@ class MobileOrdersController extends Controller
             return $this->transformOrder($order);
         });
 
-        $lastUpdatedAt = $orders->isNotEmpty() ? $orders->last()->updated_at : null;
+        $lastUpdatedAt = $orders->isNotEmpty()
+            ? $this->normalizeOrderTimestamp($orders->last()->updated_at)
+            : null;
+        $nextCursor = $hasMore && $orders->isNotEmpty() ? $orders->last()->id : null;
+        $syncToken = $lastUpdatedAt ? $this->generateOrderSyncToken($lastUpdatedAt) : null;
 
         return response()->json([
             'data' => $transformedOrders,
             'meta' => [
                 'has_more' => $hasMore,
-                'last_updated_at' => $lastUpdatedAt,
+                'next_cursor' => $nextCursor,
+                'last_updated_at' => $lastUpdatedAt?->format('Y-m-d H:i:s'),
+                'sync_token' => $syncToken,
+                'server_time' => now()->format('Y-m-d H:i:s'),
+                'total_count' => $transformedOrders->count(),
                 'count' => $transformedOrders->count(),
             ],
         ]);
+    }
+
+    private function normalizeSince(mixed $since): ?string
+    {
+        if ($since === null || $since === '') {
+            return null;
+        }
+
+        try {
+            if (is_numeric($since)) {
+                $timestamp = (int) $since;
+                if ($timestamp > 9999999999) {
+                    $timestamp = (int) floor($timestamp / 1000);
+                }
+
+                return Carbon::createFromTimestampUTC($timestamp)->format('Y-m-d H:i:s');
+            }
+
+            return Carbon::parse((string) $since)->format('Y-m-d H:i:s');
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    private function generateOrderSyncToken(Carbon|string $updatedAt): string
+    {
+        if (! $updatedAt instanceof Carbon) {
+            $updatedAt = Carbon::parse((string) $updatedAt);
+        }
+
+        return base64_encode(json_encode([
+            'timestamp' => $updatedAt->toIso8601String(),
+            'version' => 1,
+            'scope' => 'orders',
+        ]));
     }
 
     /**
@@ -240,6 +308,13 @@ class MobileOrdersController extends Controller
                 'phone' => $order->customer->phone,
             ] : null,
             'products' => $order->products ? $order->products->map(function ($product) {
+                $productData = [];
+                if (method_exists($product, 'getData')) {
+                    $productData = $product->getData() ?: [];
+                } elseif (isset($product->data) && is_array($product->data)) {
+                    $productData = $product->data;
+                }
+
                 return [
                     'id' => $product->id,
                     'product_id' => $product->product_id,
@@ -252,6 +327,14 @@ class MobileOrdersController extends Controller
                     'total_price_with_tax' => (float) $product->total_price_with_tax,
                     'tax_value' => (float) $product->tax_value,
                     'discount' => (float) $product->discount,
+                    'container_tracking_enabled' => array_key_exists('container_tracking_enabled', $productData)
+                        ? (bool) $productData['container_tracking_enabled']
+                        : null,
+                    'container_quantity_override' => array_key_exists('container_quantity_override', $productData)
+                        && $productData['container_quantity_override'] !== ''
+                        && $productData['container_quantity_override'] !== null
+                            ? (int) $productData['container_quantity_override']
+                            : null,
                 ];
             })->toArray() : [],
         ];
@@ -284,6 +367,11 @@ class MobileOrdersController extends Controller
      */
     public function batch(Request $request, OrdersService $ordersService)
     {
+        \Log::debug('[MobileOrders] Batch order creation started', [
+            'user_id' => $request->user()?->id,
+            'orders_count' => count($request->input('orders', [])),
+        ]);
+
         $orders = $request->input('orders', []);
         $results = [];
         $successCount = 0;
@@ -292,14 +380,27 @@ class MobileOrdersController extends Controller
         foreach ($orders as $orderData) {
             $clientReference = $orderData['client_reference'] ?? null;
             
+            \Log::debug('[MobileOrders] Processing order', [
+                'client_reference' => $clientReference,
+                'customer_id' => $orderData['customer_id'] ?? null,
+                'products_count' => count($orderData['products'] ?? []),
+            ]);
+            
             // Start database transaction for each order
             DB::beginTransaction();
             
             try {
                 // Check for duplicate by client_reference (stored in code field)
                 if ($clientReference) {
-                    $existing = Order::where('code', $clientReference)->first();
+                    $existing = Order::query()
+                        ->where('uuid', $clientReference)
+                        ->orWhere('code', $clientReference)
+                        ->first();
                     if ($existing) {
+                        \Log::debug('[MobileOrders] Duplicate order found', [
+                            'client_reference' => $clientReference,
+                            'existing_order_id' => $existing->id,
+                        ]);
                         $results[] = [
                             'client_reference' => $clientReference,
                             'success' => true,
@@ -317,6 +418,18 @@ class MobileOrdersController extends Controller
                 $result = $ordersService->create($orderData);
                 $order = $result['data']['order'];
 
+                if ($clientReference && $order->uuid !== $clientReference) {
+                    $order->uuid = $clientReference;
+                    $order->save();
+                }
+
+                \Log::debug('[MobileOrders] Order created successfully', [
+                    'client_reference' => $clientReference,
+                    'order_id' => $order->id,
+                    'order_code' => $order->code,
+                    'total' => $order->total,
+                ]);
+
                 $results[] = [
                     'client_reference' => $clientReference,
                     'success' => true,
@@ -333,10 +446,11 @@ class MobileOrdersController extends Controller
                 // Rollback transaction on failure
                 DB::rollBack();
                 
-                \Log::error('Mobile API: Batch order creation failed', [
+                \Log::error('[MobileOrders] Batch order creation failed', [
                     'client_reference' => $clientReference,
                     'error' => $e->getMessage(),
-                    'user_id' => auth()->id(),
+                    'trace' => $e->getTraceAsString(),
+                    'user_id' => $request->user()?->id,
                 ]);
                 
                 $results[] = [
@@ -349,6 +463,11 @@ class MobileOrdersController extends Controller
                 $failureCount++;
             }
         }
+
+        \Log::debug('[MobileOrders] Batch order creation completed', [
+            'success_count' => $successCount,
+            'failure_count' => $failureCount,
+        ]);
 
         return response()->json([
             'results' => $results,
@@ -377,5 +496,16 @@ class MobileOrdersController extends Controller
                 'last_name' => $order->customer->last_name,
             ] : null,
         ];
+    }
+
+    private function normalizeOrderTimestamp(mixed $value): ?Carbon
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return $value instanceof Carbon
+            ? $value
+            : Carbon::parse((string) $value);
     }
 }
